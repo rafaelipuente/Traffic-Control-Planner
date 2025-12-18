@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import JobDetailsForm, { JobDetails } from "@/components/JobDetailsForm";
 import OutputPanel from "@/components/OutputPanel";
+import GenerationProgress from "@/components/GenerationProgress";
 import { TcpDraftResponse, Bbox, PolygonRing } from "@/lib/tcpTypes";
 import { GeometryOutput } from "@/components/MapSelector";
 
@@ -16,6 +17,9 @@ const MapSelector = dynamic(() => import("@/components/MapSelector"), {
     </div>
   ),
 });
+
+// Dev-only delay to verify visual transitions (shows "Finalizing" step completion)
+const DEV_DELAY = process.env.NODE_ENV === "development" ? 2500 : 0;
 
 export default function PlannerPage() {
   // Geometry state
@@ -32,8 +36,88 @@ export default function PlannerPage() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Progress state
+  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
+  const [progressStep, setProgressStep] = useState<number>(0);
+  const [finalStepComplete, setFinalStepComplete] = useState<boolean>(false);
+
+  // Refs for timer cleanup
+  const elapsedTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const stepTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isMountedRef = useRef<boolean>(true);
+
   // Map token from env (client-side)
   const mapToken = process.env.NEXT_PUBLIC_MAP_TOKEN || "";
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
+      if (stepTimerRef.current) clearTimeout(stepTimerRef.current);
+    };
+  }, []);
+
+  // Timer effect - runs when isLoading changes
+  useEffect(() => {
+    // Clear any existing timers first to prevent duplicates
+    if (elapsedTimerRef.current) {
+      clearInterval(elapsedTimerRef.current);
+      elapsedTimerRef.current = null;
+    }
+    if (stepTimerRef.current) {
+      clearTimeout(stepTimerRef.current);
+      stepTimerRef.current = null;
+    }
+
+    if (!isLoading) {
+      return;
+    }
+
+    // Local flag to prevent updates after effect cleanup
+    let isEffectActive = true;
+
+    // Start elapsed timer
+    elapsedTimerRef.current = setInterval(() => {
+      if (isMountedRef.current && isEffectActive) {
+        setElapsedSeconds((prev) => prev + 1);
+      }
+    }, 1000);
+
+    // Step advancement schedule (steps 0->1->2, stops BEFORE step 3)
+    // Step 3 ("Finalizing") is reached but NEVER auto-completed
+    const advanceStep = (currentStep: number) => {
+      // Stop advancing once we reach step 3 (Finalizing)
+      // Step 3 completion is controlled ONLY by finalStepComplete from API success
+      if (!isMountedRef.current || !isEffectActive || currentStep >= 3) return;
+
+      stepTimerRef.current = setTimeout(() => {
+        if (isMountedRef.current && isEffectActive) {
+          const nextStep = currentStep + 1;
+          setProgressStep(nextStep);
+          // Continue advancing only up to step 3 (but step 3 won't auto-complete)
+          if (nextStep < 3) {
+            advanceStep(nextStep);
+          }
+        }
+      }, 3500); // ~3.5 seconds per step
+    };
+
+    advanceStep(0);
+
+    return () => {
+      isEffectActive = false;
+      if (elapsedTimerRef.current) {
+        clearInterval(elapsedTimerRef.current);
+        elapsedTimerRef.current = null;
+      }
+      if (stepTimerRef.current) {
+        clearTimeout(stepTimerRef.current);
+        stepTimerRef.current = null;
+      }
+    };
+  }, [isLoading]);
 
   const handleGeometryChange = useCallback((geo: GeometryOutput | null, label: string) => {
     setGeometry(geo);
@@ -84,6 +168,11 @@ export default function PlannerPage() {
     const request = buildRequest();
     if (!request) return;
 
+    // Reset progress state
+    setElapsedSeconds(0);
+    setProgressStep(0);
+    setFinalStepComplete(false);
+
     setIsLoading(true);
     setError(null);
     setResponse(null);
@@ -114,12 +203,30 @@ export default function PlannerPage() {
       }
 
       const data = JSON.parse(text) as TcpDraftResponse;
-      setResponse(data);
-      setRawJson(JSON.stringify(data, null, 2));
+      
+      // Mark final step as complete on success
+      if (isMountedRef.current) {
+        setFinalStepComplete(true);
+      }
+      
+      // Dev-only delay to verify visual transitions (see "Finalizing" checkmark)
+      // In production, this is 0ms (no delay)
+      if (DEV_DELAY > 0) {
+        await new Promise((resolve) => setTimeout(resolve, DEV_DELAY));
+      }
+      
+      if (isMountedRef.current) {
+        setResponse(data);
+        setRawJson(JSON.stringify(data, null, 2));
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error occurred");
+      if (isMountedRef.current) {
+        setError(err instanceof Error ? err.message : "Unknown error occurred");
+      }
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
     }
   }, [buildRequest]);
 
@@ -230,14 +337,34 @@ export default function PlannerPage() {
 
           {/* Right Column - Output */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 min-h-[600px]">
-            <OutputPanel
-              response={response}
-              rawJson={rawJson}
-              isLoading={isLoading}
-              error={error}
-              onRegenerate={handleRegenerate}
-              canRegenerate={canGenerate}
-            />
+            {isLoading ? (
+              <GenerationProgress
+                elapsedSeconds={elapsedSeconds}
+                progressStep={progressStep}
+                finalStepComplete={finalStepComplete}
+              />
+            ) : (
+              <OutputPanel
+                response={response}
+                rawJson={rawJson}
+                isLoading={isLoading}
+                error={error}
+                onRegenerate={handleRegenerate}
+                canRegenerate={canGenerate}
+                jobInfo={
+                  jobDetails
+                    ? {
+                        locationLabel: locationLabel || "Unknown location",
+                        roadType: jobDetails.roadType,
+                        postedSpeedMph: jobDetails.postedSpeedMph,
+                        workType: jobDetails.workType,
+                        workLengthFt: jobDetails.workLengthFt,
+                        isNight: jobDetails.isNight,
+                      }
+                    : null
+                }
+              />
+            )}
           </div>
         </div>
       </main>

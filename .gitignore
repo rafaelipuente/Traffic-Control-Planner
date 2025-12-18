@@ -9,5 +9,8 @@ node_modules
 # Next.js build output
 .next
 
+# RAG index (generated)
+rag_index/
+
 # OS junk
 .DS_Store

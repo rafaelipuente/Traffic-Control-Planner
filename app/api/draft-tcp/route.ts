@@ -180,6 +180,67 @@ function buildRetrievalContext(req: TcpDraftRequest): RetrievalQueryContext {
   };
 }
 
+/**
+ * Provides MUTCD-based fallback guidance when no handbook chunks are found.
+ * Based on MUTCD Table 6C-2 for sign spacing and standard taper/buffer calculations.
+ */
+function buildFallbackGuidance(speedMph: number): string {
+  // MUTCD Table 6C-2 approximate values for sign spacing (A, B, C distances)
+  let signSpacingA: number;
+  let signSpacingB: number;
+  let signSpacingC: number;
+
+  if (speedMph <= 25) {
+    signSpacingA = 100;
+    signSpacingB = 100;
+    signSpacingC = 100;
+  } else if (speedMph <= 35) {
+    signSpacingA = 350;
+    signSpacingB = 350;
+    signSpacingC = 350;
+  } else if (speedMph <= 45) {
+    signSpacingA = 500;
+    signSpacingB = 500;
+    signSpacingC = 500;
+  } else if (speedMph <= 55) {
+    signSpacingA = 500;
+    signSpacingB = 500;
+    signSpacingC = 500;
+  } else {
+    signSpacingA = 1000;
+    signSpacingB = 1500;
+    signSpacingC = 2640;
+  }
+
+  // Taper length: L = W × S (where W is lane width ~12ft and S is speed in mph)
+  // Simplified: approximately speed × 10 for speeds under 45, speed × 15 for higher
+  const taperLengthFt = speedMph <= 45 ? speedMph * 10 : speedMph * 15;
+
+  // Buffer space: typically 50-100ft minimum, scale with speed
+  const bufferLengthFt = Math.max(50, speedMph * 2);
+
+  return `[FALLBACK] MUTCD General Defaults (Table 6C-2 approximation)
+No specific handbook guidance was found for this scenario. Using MUTCD general defaults:
+
+Sign Spacing (based on ${speedMph} mph):
+- Distance A (first warning sign): ${signSpacingA} ft
+- Distance B (second warning sign): ${signSpacingB} ft
+- Distance C (third warning sign): ${signSpacingC} ft
+
+Taper Length: ${taperLengthFt} ft (based on lane width × speed factor)
+Buffer Space: ${bufferLengthFt} ft minimum
+
+Device recommendations:
+- Cones: 20-30 for typical work zone
+- Signs: 4-8 depending on approach directions
+- Arrow board: Recommended for speeds > 35 mph
+- Flaggers: Required for intersection or complex work
+
+Reference: MUTCD Chapter 6C, Table 6C-2
+
+IMPORTANT: These are fallback defaults. The planner should verify these values against local jurisdiction requirements.`;
+}
+
 function buildSystemPrompt(): string {
   return [
     "You are a traffic control planning assistant.",
@@ -460,22 +521,25 @@ export async function POST(req: NextRequest) {
 
   const { handbookChunks, exampleChunks } = await retrieveSupport(retrievalCtx);
 
-  if (handbookChunks.length === 0) {
-    return jsonError(500, {
-      error: "No applicable handbook guidance found",
-      details: {
-        message:
-          "Could not find relevant spacing/taper/buffer/device guidance in tcp handbooks/ for this scenario.",
-      },
-    });
+  // Track if we're using fallback defaults
+  const usingFallbackDefaults = handbookChunks.length === 0;
+
+  if (usingFallbackDefaults) {
+    console.log("[draft-tcp] No handbook match found, using MUTCD fallback defaults:");
+    console.log(`  - roadType: ${tcpReq.roadType}`);
+    console.log(`  - workType: ${tcpReq.workType}`);
+    console.log(`  - speedMph: ${tcpReq.postedSpeedMph}`);
   }
 
-  const handbookText = handbookChunks
-    .map(
-      (c, idx) =>
-        `[HB${idx + 1}] ${formatCitation(c)}\n${c.text.slice(0, 1200)}`
-    )
-    .join("\n\n");
+  // Build handbook text or provide fallback guidance
+  const handbookText = handbookChunks.length > 0
+    ? handbookChunks
+        .map(
+          (c, idx) =>
+            `[HB${idx + 1}] ${formatCitation(c)}\n${c.text.slice(0, 1200)}`
+        )
+        .join("\n\n")
+    : buildFallbackGuidance(tcpReq.postedSpeedMph);
 
   const exampleText = exampleChunks
     .map(
@@ -696,8 +760,16 @@ Return ONLY the corrected JSON, no explanation.`;
             if (retryValidation.ok) {
               console.log("[draft-tcp] Retry succeeded!");
               const svgContent = generateSvgFromPlan(retryValidation.value.plan);
+              
+              // Add fallback assumption if applicable
+              const assumptions = [...retryValidation.value.assumptions];
+              if (usingFallbackDefaults) {
+                assumptions.unshift("⚠️ No specific handbook guidance found for this road type. Using MUTCD general defaults. Verify against local jurisdiction requirements.");
+              }
+              
               const finalResponse: TcpDraftResponse = {
                 ...retryValidation.value,
+                assumptions,
                 svgContent,
               };
               return NextResponse.json(finalResponse);
@@ -724,8 +796,16 @@ Return ONLY the corrected JSON, no explanation.`;
   const responseValue = validation.value;
 
   const svgContent = generateSvgFromPlan(responseValue.plan);
+  
+  // Add fallback assumption if applicable
+  const assumptions = [...responseValue.assumptions];
+  if (usingFallbackDefaults) {
+    assumptions.unshift("⚠️ No specific handbook guidance found for this road type. Using MUTCD general defaults. Verify against local jurisdiction requirements.");
+  }
+  
   const finalResponse: TcpDraftResponse = {
     ...responseValue,
+    assumptions,
     svgContent,
   };
 
