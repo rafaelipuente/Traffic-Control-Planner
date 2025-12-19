@@ -183,6 +183,71 @@ npm start
 npm run lint
 ```
 
+## RAG (Retrieval-Augmented Generation)
+
+TCP Planner uses RAG to ground AI responses in your actual handbook and example documents.
+
+### Building the Index
+
+Before the retriever can work, you need to ingest your PDF documents:
+
+```bash
+# Make sure OPENAI_API_KEY is set (for generating embeddings)
+npm run rag:ingest
+```
+
+This will:
+1. Extract text from PDFs in `tcp handbooks/` and `tcp examples/`
+2. Chunk the text (~500 tokens per chunk)
+3. Generate embeddings using OpenAI's `text-embedding-3-small`
+4. Write index files to `rag_index/` (gitignored)
+
+**Note**: The `rag_index/` folder is generated output and should not be committed.
+
+### Testing Retrieval (Dev Only)
+
+A dev-only endpoint is available to test retrieval without calling the LLM:
+
+```bash
+# Check if index is ready
+curl http://localhost:3000/api/rag-search
+
+# Search for relevant chunks
+curl -X POST http://localhost:3000/api/rag-search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "sign spacing for 35 mph road", "k": 5}'
+```
+
+**Response:**
+```json
+{
+  "query": "sign spacing for 35 mph road",
+  "indexStats": {
+    "totalChunks": 245,
+    "handbookChunks": 180,
+    "exampleChunks": 65,
+    "uniqueDocs": 10
+  },
+  "handbooks": [
+    {
+      "id": "handbook-mutcd11thedition-chunk-42",
+      "docName": "mutcd11thedition",
+      "score": 0.8523,
+      "snippet": "Table 6C-2 shows sign spacing..."
+    }
+  ],
+  "examples": [...]
+}
+```
+
+### RAG Index Files
+
+The `rag_index/` folder contains:
+- `chunks.jsonl` - Text chunks with metadata
+- `embeddings.jsonl` - Vector embeddings for each chunk
+
+These files are automatically generated and should be re-built whenever source documents change.
+
 ## License
 
 Private project - All rights reserved.

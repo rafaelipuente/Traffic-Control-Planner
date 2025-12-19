@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import JobDetailsForm, { JobDetails } from "@/components/JobDetailsForm";
 import OutputPanel from "@/components/OutputPanel";
 import GenerationProgress from "@/components/GenerationProgress";
+import RagSearchTester from "@/components/RagSearchTester";
 import { TcpDraftResponse, Bbox, PolygonRing } from "@/lib/tcpTypes";
 import { GeometryOutput } from "@/components/MapSelector";
 
@@ -18,8 +19,9 @@ const MapSelector = dynamic(() => import("@/components/MapSelector"), {
   ),
 });
 
-// Dev-only delay to verify visual transitions (shows "Finalizing" step completion)
-const DEV_DELAY = process.env.NODE_ENV === "development" ? 2500 : 0;
+// Dev-only flags
+const IS_DEV = process.env.NODE_ENV === "development";
+const DEV_DELAY = IS_DEV ? 2500 : 0;
 
 export default function PlannerPage() {
   // Geometry state
@@ -367,6 +369,9 @@ export default function PlannerPage() {
             )}
           </div>
         </div>
+
+        {/* DEV ONLY: RAG Search Tester */}
+        {IS_DEV && <RagSearchTester />}
       </main>
     </div>
   );
