@@ -6,7 +6,7 @@ import JobDetailsForm, { JobDetails } from "@/components/JobDetailsForm";
 import OutputPanel from "@/components/OutputPanel";
 import GenerationProgress from "@/components/GenerationProgress";
 import RagSearchTester from "@/components/RagSearchTester";
-import { TcpDraftResponse, Bbox, PolygonRing } from "@/lib/tcpTypes";
+import { TcpDraftResponse, Bbox, PolygonRing, CoverageInfo } from "@/lib/tcpTypes";
 import { GeometryOutput } from "@/components/MapSelector";
 
 // Dynamic import for MapSelector to avoid SSR issues with Mapbox
@@ -37,6 +37,11 @@ export default function PlannerPage() {
   const [rawJson, setRawJson] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<{
+    missing?: string[];
+    coverage?: CoverageInfo;
+    message?: string;
+  } | null>(null);
 
   // Progress state
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
@@ -177,6 +182,7 @@ export default function PlannerPage() {
 
     setIsLoading(true);
     setError(null);
+    setErrorDetails(null);
     setResponse(null);
     setRawJson(null);
 
@@ -198,6 +204,15 @@ export default function PlannerPage() {
             errJson.details?.issues?.join("; ") ||
             `Request failed with status ${res.status}`;
           setError(msg);
+          
+          // Extract coverage gate error details if present
+          if (errJson.details?.coverage && errJson.details?.missing) {
+            setErrorDetails({
+              missing: errJson.details.missing,
+              coverage: errJson.details.coverage,
+              message: errJson.details.message,
+            });
+          }
         } catch {
           setError(`Request failed with status ${res.status}: ${text.slice(0, 500)}`);
         }
@@ -351,6 +366,7 @@ export default function PlannerPage() {
                 rawJson={rawJson}
                 isLoading={isLoading}
                 error={error}
+                errorDetails={errorDetails}
                 onRegenerate={handleRegenerate}
                 canRegenerate={canGenerate}
                 jobInfo={

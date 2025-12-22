@@ -39,10 +39,54 @@ async function loadHandbookChunks(): Promise<SourceChunk[]> {
     const docName = path.parse(file).name;
     try {
       const text = await loadPdfText(fullPath);
-      const pages = text.split(/\n\s*\f|\f/g); // crude page split
+      
+      if (!text || text.trim().length < 100) {
+        console.warn(`[retrieval] PDF ${file}: No text extracted (possibly scanned/image PDF)`);
+        // Create a metadata-only chunk
+        chunks.push({
+          id: `HB-${docName}-meta`,
+          kind: "handbook",
+          docName,
+          text: `Reference document: ${file}. This PDF could not be text-extracted. Consult the original document for guidance.`,
+        });
+        continue;
+      }
+      
+      // Try multiple page splitting strategies
+      let pages: string[] = [];
+      
+      // Strategy 1: Form feed character
+      if (text.includes('\f')) {
+        pages = text.split(/\f/g);
+      }
+      // Strategy 2: Common page break patterns
+      else if (/\n\s*-?\s*\d+\s*-?\s*\n/.test(text)) {
+        // Split on page number patterns like "- 5 -" or just "5" on its own line
+        pages = text.split(/\n\s*(?:-\s*)?\d+(?:\s*-)?\s*\n/g);
+      }
+      // Strategy 3: Split by approximate chunk size if no page breaks
+      else {
+        const CHUNK_SIZE = 3000; // characters per chunk
+        for (let i = 0; i < text.length; i += CHUNK_SIZE) {
+          pages.push(text.slice(i, i + CHUNK_SIZE));
+        }
+      }
+      
+      // If we only got 1 "page", try chunking by paragraph density
+      if (pages.length <= 1 && text.length > 4000) {
+        console.log(`[retrieval] PDF ${file}: Single page detected, chunking by size`);
+        pages = [];
+        const CHUNK_SIZE = 3000;
+        for (let i = 0; i < text.length; i += CHUNK_SIZE) {
+          pages.push(text.slice(i, i + CHUNK_SIZE));
+        }
+      }
+      
+      console.log(`[retrieval] PDF ${file}: ${pages.length} chunks extracted, ${text.length} chars total`);
+      
       pages.forEach((pageText, index) => {
         const trimmed = pageText.trim();
-        if (!trimmed) return;
+        if (!trimmed || trimmed.length < 50) return;
         chunks.push({
           id: `HB-${docName}-p${index + 1}`,
           kind: "handbook",
@@ -52,7 +96,14 @@ async function loadHandbookChunks(): Promise<SourceChunk[]> {
         });
       });
     } catch (err) {
-      console.error("Failed to parse handbook PDF", fullPath, err);
+      console.error(`[retrieval] Failed to parse handbook PDF ${file}:`, err instanceof Error ? err.message : err);
+      // Create a fallback chunk so the document is at least acknowledged
+      chunks.push({
+        id: `HB-${docName}-error`,
+        kind: "handbook",
+        docName,
+        text: `Reference document: ${file}. This PDF could not be parsed. Consult the original document for guidance.`,
+      });
     }
   }
 
@@ -113,6 +164,15 @@ async function ensureLoaded(): Promise<SourceChunk[]> {
   ]);
 
   cachedChunks = [...handbooks, ...examples];
+  
+  console.log("[retrieval] Chunks loaded:", {
+    handbookChunks: handbooks.length,
+    exampleChunks: examples.length,
+    totalChunks: cachedChunks.length,
+    handbookDocs: [...new Set(handbooks.map(c => c.docName))],
+    handbookPages: handbooks.slice(0, 10).map(c => `${c.docName} p.${c.pageNumber}`),
+  });
+  
   return cachedChunks;
 }
 
@@ -162,6 +222,105 @@ export interface RetrievedChunk extends SourceChunk {
   score: number;
 }
 
+/**
+ * Score a chunk against an array of query terms (more sophisticated than simple keyword match)
+ */
+function scoreChunkWithTerms(chunk: SourceChunk, terms: string[]): number {
+  const textLower = chunk.text.toLowerCase();
+  let score = 0;
+  for (const term of terms) {
+    if (term && textLower.includes(term.toLowerCase())) {
+      // Give higher weight to longer/more specific terms
+      score += term.length > 10 ? 2 : 1;
+    }
+  }
+  return score;
+}
+
+/**
+ * Category-targeted retrieval queries for coverage gate categories.
+ * These terms are designed to match real handbook terminology.
+ */
+export const CATEGORY_QUERIES = {
+  spacing: [
+    "advance warning area",
+    "warning area",
+    "sign spacing",
+    "spacing",
+    "A B C",
+    "A, B, and C",
+    "distance A",
+    "distance B", 
+    "distance C",
+    "Table 6C-2",
+    "Table 2-4",
+    "Table 6C",
+    "warning signs",
+    "advance warning",
+  ],
+  taper: [
+    "taper length",
+    "taper",
+    "merging taper",
+    "shifting taper",
+    "shoulder taper",
+    "transition area",
+    "L=",
+    "L =",
+    "taper types",
+    "lane closure taper",
+    "taper formula",
+  ],
+  buffer: [
+    "buffer space",
+    "buffer",
+    "longitudinal buffer",
+    "buffer length",
+    "stopping distance",
+    "braking distance",
+    "clear zone",
+    "activity area",
+    "work space",
+    "buffer area",
+  ],
+  devices: [
+    "channelizing devices",
+    "cones",
+    "drums",
+    "barricades",
+    "arrow board",
+    "arrow panel",
+    "flagger",
+    "flaggers",
+    "delineators",
+    "traffic control devices",
+  ],
+};
+
+/**
+ * Perform category-targeted retrieval to ensure coverage gate categories are found.
+ * Runs separate searches for spacing, taper, buffer, and devices.
+ */
+async function retrieveCategoryChunks(
+  allChunks: SourceChunk[],
+  category: keyof typeof CATEGORY_QUERIES,
+  maxResults: number = 8
+): Promise<RetrievedChunk[]> {
+  const terms = CATEGORY_QUERIES[category];
+  
+  const scored = allChunks
+    .filter((c) => c.kind === "handbook")
+    .map<RetrievedChunk>((c) => ({
+      ...c,
+      score: scoreChunkWithTerms(c, terms),
+    }))
+    .filter((c) => c.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, maxResults);
+  
+  return scored;
+}
+
 export async function retrieveSupport(
   ctx: RetrievalQueryContext,
   options?: { topHandbooks?: number; topExamples?: number }
@@ -169,26 +328,71 @@ export async function retrieveSupport(
   handbookChunks: RetrievedChunk[];
   exampleChunks: RetrievedChunk[];
 }> {
-  const { topHandbooks = 6, topExamples = 4 } = options || {};
+  const { topHandbooks = 12, topExamples = 4 } = options || {};
   const chunks = await ensureLoaded();
+  
+  // ===== CATEGORY-TARGETED RETRIEVAL =====
+  // Run separate searches for each coverage category to ensure we find relevant chunks
+  const [spacingChunks, taperChunks, bufferChunks, devicesChunks] = await Promise.all([
+    retrieveCategoryChunks(chunks, "spacing", 8),
+    retrieveCategoryChunks(chunks, "taper", 8),
+    retrieveCategoryChunks(chunks, "buffer", 8),
+    retrieveCategoryChunks(chunks, "devices", 8),
+  ]);
+  
+  // Merge and deduplicate by chunk ID, keeping highest score per chunk
+  const chunkMap = new Map<string, RetrievedChunk>();
+  
+  for (const chunk of [...spacingChunks, ...taperChunks, ...bufferChunks, ...devicesChunks]) {
+    const existing = chunkMap.get(chunk.id);
+    if (!existing || chunk.score > existing.score) {
+      chunkMap.set(chunk.id, chunk);
+    }
+  }
+  
+  // Also add context-based retrieval (original keywords)
   const keywords = buildKeywords(ctx);
-
-  const scored = chunks.map<RetrievedChunk>((c) => ({
-    ...c,
-    score: scoreChunk(c, keywords),
-  }));
-
-  const handbookChunks = scored
-    .filter((c) => c.kind === "handbook" && c.score > 0)
+  const contextScored = chunks
+    .filter((c) => c.kind === "handbook")
+    .map<RetrievedChunk>((c) => ({
+      ...c,
+      score: scoreChunk(c, keywords),
+    }))
+    .filter((c) => c.score > 0);
+  
+  for (const chunk of contextScored) {
+    const existing = chunkMap.get(chunk.id);
+    if (!existing || chunk.score > existing.score) {
+      chunkMap.set(chunk.id, chunk);
+    }
+  }
+  
+  // Sort by score and take top results
+  const handbookChunks = Array.from(chunkMap.values())
     .sort((a, b) => b.score - a.score)
     .slice(0, topHandbooks);
-
-  const exampleChunks = scored
-    .filter((c) => c.kind === "example" && c.score > 0)
+  
+  // Example retrieval (unchanged)
+  const exampleScored = chunks
+    .filter((c) => c.kind === "example")
+    .map<RetrievedChunk>((c) => ({
+      ...c,
+      score: scoreChunk(c, keywords),
+    }))
+    .filter((c) => c.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, topExamples);
 
-  return { handbookChunks, exampleChunks };
+  console.log("[retrieval] Category-targeted results:", {
+    spacing: spacingChunks.length,
+    taper: taperChunks.length,
+    buffer: bufferChunks.length,
+    devices: devicesChunks.length,
+    mergedHandbooks: handbookChunks.length,
+    examples: exampleScored.length,
+  });
+
+  return { handbookChunks, exampleChunks: exampleScored };
 }
 
 export function formatCitation(chunk: SourceChunk): string {

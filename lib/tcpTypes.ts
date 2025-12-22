@@ -72,18 +72,47 @@ export const tcpPlanSchema = z.object({
   devices: devicesSchema,
 });
 
+// Coverage Gate: Tracks which critical handbook categories were found
+export const coverageCitationSchema = z.object({
+  category: z.enum(["spacing", "taper", "buffer", "devices"]),
+  docName: z.string(),
+  page: z.number().optional(),
+  snippet: z.string().optional(),
+});
+
+export const coverageInfoSchema = z.object({
+  spacing: z.boolean(),
+  taper: z.boolean(),
+  buffer: z.boolean(),
+  devices: z.boolean(),
+  citations: z.array(coverageCitationSchema),
+});
+
+export type CoverageCitation = z.infer<typeof coverageCitationSchema>;
+export type CoverageInfo = z.infer<typeof coverageInfoSchema>;
+
 export const tcpDraftResponseSchema = z.object({
   summary: z.string(),
   plan: tcpPlanSchema,
   assumptions: z.array(z.string()),
   references: z.array(z.string()),
   svgContent: z.string(),
+  coverage: coverageInfoSchema.optional(), // Added for UI confidence display
 });
 
 export type SignSpacing = z.infer<typeof signSpacingSchema>;
 export type Devices = z.infer<typeof devicesSchema>;
 export type TcpPlan = z.infer<typeof tcpPlanSchema>;
 export type TcpDraftResponse = z.infer<typeof tcpDraftResponseSchema>;
+
+// Coverage gate error response type
+export interface CoverageGateError {
+  error: "Missing handbook guidance";
+  details: {
+    missing: ("spacing" | "taper" | "buffer")[];
+    coverage: CoverageInfo;
+  };
+}
 
 export const MAX_SVG_LENGTH = 50_000;
 

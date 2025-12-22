@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { TcpDraftResponse } from "@/lib/tcpTypes";
+import { TcpDraftResponse, CoverageInfo } from "@/lib/tcpTypes";
 
 export interface JobInfoForExport {
   locationLabel: string;
@@ -12,11 +12,19 @@ export interface JobInfoForExport {
   isNight: boolean;
 }
 
+// Extended error object that may include coverage gate details
+export interface CoverageGateErrorDetails {
+  missing?: string[];
+  coverage?: CoverageInfo;
+  message?: string;
+}
+
 export interface OutputPanelProps {
   response: TcpDraftResponse | null;
   rawJson: string | null;
   isLoading: boolean;
   error: string | null;
+  errorDetails?: CoverageGateErrorDetails | null; // Coverage gate error details
   onRegenerate: () => void;
   canRegenerate: boolean;
   jobInfo?: JobInfoForExport | null;
@@ -27,11 +35,13 @@ export default function OutputPanel({
   rawJson,
   isLoading,
   error,
+  errorDetails,
   onRegenerate,
   canRegenerate,
   jobInfo,
 }: OutputPanelProps) {
   const [isExporting, setIsExporting] = useState(false);
+  const [showCoverageDetails, setShowCoverageDetails] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
 
   const handleExportPdf = async () => {
@@ -248,30 +258,146 @@ export default function OutputPanel({
     );
   }
 
-  // Error state
+  // Error state - with special handling for Coverage Gate errors
   if (error) {
+    const isCoverageGateError = errorDetails?.coverage && errorDetails?.missing;
+
     return (
       <div className="p-6">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <div className="flex items-start gap-3">
-            <div className="flex-shrink-0">
-              <svg className="w-5 h-5 text-red-500" fill="currentColor" viewBox="0 0 20 20">
-                <path
-                  fillRule="evenodd"
-                  d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                  clipRule="evenodd"
-                />
-              </svg>
-            </div>
-            <div className="flex-1">
-              <h3 className="text-sm font-semibold text-red-800">Error generating TCP</h3>
-              <p className="mt-1 text-sm text-red-700 whitespace-pre-wrap">{error}</p>
+        {isCoverageGateError ? (
+          // Safety Block Alert for Coverage Gate errors
+          <div className="bg-orange-50 border-2 border-orange-500 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0">
+                <svg className="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  />
+                </svg>
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-orange-800">
+                  Safety Gate: Cannot Generate Plan
+                </h3>
+                <p className="mt-2 text-sm text-orange-700">
+                  The following mandatory handbook rules were not found in the current knowledge base:
+                </p>
+                <ul className="mt-2 list-disc list-inside text-sm text-orange-800 font-medium">
+                  {errorDetails.missing?.map((item) => (
+                    <li key={item} className="capitalize">{item} guidance</li>
+                  ))}
+                </ul>
+                <p className="mt-3 text-xs text-orange-600">
+                  This safety gate prevents the AI from generating potentially incorrect numeric values.
+                  The knowledge base needs handbook documents that cover sign spacing, taper lengths, and buffer distances.
+                </p>
+
+                {/* Coverage Status Grid */}
+                {errorDetails.coverage && (
+                  <div className="mt-4 p-3 bg-white rounded border border-orange-200">
+                    <h4 className="text-sm font-semibold text-gray-700 mb-2">Coverage Status</h4>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div className="flex items-center gap-2">
+                        {errorDetails.coverage.spacing ? (
+                          <span className="text-green-600">✓</span>
+                        ) : (
+                          <span className="text-red-600">✗</span>
+                        )}
+                        <span className={errorDetails.coverage.spacing ? "text-gray-700" : "text-red-700 font-medium"}>
+                          Spacing
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {errorDetails.coverage.taper ? (
+                          <span className="text-green-600">✓</span>
+                        ) : (
+                          <span className="text-red-600">✗</span>
+                        )}
+                        <span className={errorDetails.coverage.taper ? "text-gray-700" : "text-red-700 font-medium"}>
+                          Taper
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {errorDetails.coverage.buffer ? (
+                          <span className="text-green-600">✓</span>
+                        ) : (
+                          <span className="text-red-600">✗</span>
+                        )}
+                        <span className={errorDetails.coverage.buffer ? "text-gray-700" : "text-red-700 font-medium"}>
+                          Buffer
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {errorDetails.coverage.devices ? (
+                          <span className="text-green-600">✓</span>
+                        ) : (
+                          <span className="text-yellow-600">⚠</span>
+                        )}
+                        <span className={errorDetails.coverage.devices ? "text-gray-700" : "text-yellow-700"}>
+                          Devices
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* View Retrieved Chunks Button */}
+                {errorDetails.coverage?.citations && errorDetails.coverage.citations.length > 0 && (
+                  <div className="mt-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowCoverageDetails(!showCoverageDetails)}
+                      className="text-sm text-orange-700 hover:text-orange-900 underline"
+                    >
+                      {showCoverageDetails ? "Hide" : "View"} Retrieved Chunks ({errorDetails.coverage.citations.length})
+                    </button>
+                    {showCoverageDetails && (
+                      <div className="mt-2 p-2 bg-gray-50 rounded border border-gray-200 max-h-48 overflow-y-auto">
+                        {errorDetails.coverage.citations.map((citation, idx) => (
+                          <div key={idx} className="text-xs text-gray-600 mb-2 pb-2 border-b border-gray-100 last:border-b-0">
+                            <span className="font-semibold text-gray-700">[{citation.category}]</span>{" "}
+                            {citation.docName}
+                            {citation.page && <span> p.{citation.page}</span>}
+                            {citation.snippet && (
+                              <p className="mt-1 text-gray-500 italic">{citation.snippet}...</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        ) : (
+          // Standard error display
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0">
+                <svg className="w-5 h-5 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                  <path
+                    fillRule="evenodd"
+                    d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-semibold text-red-800">Error generating TCP</h3>
+                <p className="mt-1 text-sm text-red-700 whitespace-pre-wrap">{error}</p>
+              </div>
+            </div>
+          </div>
+        )}
         {/* Friendly hint */}
         <p className="mt-3 text-xs text-gray-500 text-center">
-          If this keeps happening, verify your API key, billing, or usage limits.
+          {isCoverageGateError 
+            ? "Run the RAG ingestion script to index more handbook documents."
+            : "If this keeps happening, verify your API key, billing, or usage limits."}
         </p>
         {canRegenerate && (
           <button
@@ -302,6 +428,77 @@ export default function OutputPanel({
         </h3>
         <p className="text-gray-800">{summary}</p>
       </div>
+
+      {/* Plan Confidence Card - Safety Orange Theme */}
+      {response.coverage && (
+        <div className="bg-orange-50 border-2 border-orange-500 rounded-lg shadow-sm p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <svg className="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+            <h3 className="text-sm font-semibold text-orange-800 uppercase tracking-wide">
+              Plan Confidence
+            </h3>
+          </div>
+          
+          {/* Coverage Checklist */}
+          <div className="grid grid-cols-4 gap-3 mb-3">
+            <div className={`flex items-center gap-1.5 px-2 py-1.5 rounded ${response.coverage.spacing ? "bg-green-100" : "bg-red-100"}`}>
+              <span className={response.coverage.spacing ? "text-green-600" : "text-red-600"}>
+                {response.coverage.spacing ? "✓" : "✗"}
+              </span>
+              <span className={`text-sm font-medium ${response.coverage.spacing ? "text-green-800" : "text-red-800"}`}>
+                Spacing
+              </span>
+            </div>
+            <div className={`flex items-center gap-1.5 px-2 py-1.5 rounded ${response.coverage.taper ? "bg-green-100" : "bg-red-100"}`}>
+              <span className={response.coverage.taper ? "text-green-600" : "text-red-600"}>
+                {response.coverage.taper ? "✓" : "✗"}
+              </span>
+              <span className={`text-sm font-medium ${response.coverage.taper ? "text-green-800" : "text-red-800"}`}>
+                Taper
+              </span>
+            </div>
+            <div className={`flex items-center gap-1.5 px-2 py-1.5 rounded ${response.coverage.buffer ? "bg-green-100" : "bg-red-100"}`}>
+              <span className={response.coverage.buffer ? "text-green-600" : "text-red-600"}>
+                {response.coverage.buffer ? "✓" : "✗"}
+              </span>
+              <span className={`text-sm font-medium ${response.coverage.buffer ? "text-green-800" : "text-red-800"}`}>
+                Buffer
+              </span>
+            </div>
+            <div className={`flex items-center gap-1.5 px-2 py-1.5 rounded ${response.coverage.devices ? "bg-green-100" : "bg-yellow-100"}`}>
+              <span className={response.coverage.devices ? "text-green-600" : "text-yellow-600"}>
+                {response.coverage.devices ? "✓" : "⚠"}
+              </span>
+              <span className={`text-sm font-medium ${response.coverage.devices ? "text-green-800" : "text-yellow-800"}`}>
+                Devices
+              </span>
+            </div>
+          </div>
+
+          {/* Verified Sources */}
+          {response.coverage.citations && response.coverage.citations.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-orange-700 mb-2">Verified Sources</h4>
+              <div className="flex flex-wrap gap-1.5">
+                {response.coverage.citations.map((citation, idx) => (
+                  <span
+                    key={idx}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-orange-200 rounded text-xs text-orange-700"
+                    title={citation.snippet || undefined}
+                  >
+                    <span className="font-medium uppercase">{citation.category}</span>
+                    <span className="text-orange-400">|</span>
+                    <span>{citation.docName}</span>
+                    {citation.page && <span className="text-orange-400">p.{citation.page}</span>}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* SVG Diagram Preview */}
       <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4">

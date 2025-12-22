@@ -5,11 +5,14 @@ import {
   TcpDraftResponse,
   TcpPlan,
   tcpDraftRequestSchema,
+  CoverageInfo,
+  CoverageCitation,
 } from "@/lib/tcpTypes";
 import {
   RetrievalQueryContext,
   formatCitation,
   retrieveSupport,
+  SourceChunk,
 } from "@/lib/retrieval";
 
 export const runtime = "nodejs";
@@ -241,8 +244,186 @@ Reference: MUTCD Chapter 6C, Table 6C-2
 IMPORTANT: These are fallback defaults. The planner should verify these values against local jurisdiction requirements.`;
 }
 
-function buildSystemPrompt(): string {
-  return [
+/**
+ * COVERAGE GATE: Semantic-aware check to verify handbook chunks contain critical guidance.
+ * Returns coverage status for spacing, taper, buffer, and devices.
+ * 
+ * IMPROVED PATTERNS: Match real handbook terminology from MUTCD, OTTCH, and local manuals.
+ */
+function analyzeHandbookCoverage(handbookChunks: SourceChunk[]): CoverageInfo {
+  const coverage: CoverageInfo = {
+    spacing: false,
+    taper: false,
+    buffer: false,
+    devices: false,
+    citations: [],
+  };
+
+  // IMPROVED Regex patterns for each category (case-insensitive)
+  // These are designed to match actual handbook terminology
+  
+  // SPACING: Match advance warning area, sign spacing, A/B/C distances, tables
+  const spacingPatterns = [
+    /advance\s*warning\s*(area|zone|signs?)?/i,
+    /warning\s*(area|zone|signs?)/i,
+    /sign\s*spacing/i,
+    /spacing/i,
+    /[ABC]\s*[:=]\s*\d+/i,  // A: 350, B = 500, etc.
+    /distance\s*[ABC]/i,
+    /Table\s*(6C-?\d|2-?\d)/i,  // Table 6C-2, Table 2-4
+    /A,?\s*B,?\s*(and\s*)?C/i,
+  ];
+  
+  // TAPER: Match taper terms, transition area, L= formula
+  const taperPatterns = [
+    /taper\s*(length|type|formula)?/i,
+    /merging\s*taper/i,
+    /shifting\s*taper/i,
+    /shoulder\s*taper/i,
+    /transition\s*(area|zone)/i,
+    /L\s*[=:]\s*\d+/i,  // L = 180, L: 200
+    /taper.*\d+\s*(ft|feet|')/i,  // taper 180 ft
+    /\d+\s*(ft|feet|')\s*taper/i,  // 180 ft taper
+  ];
+  
+  // BUFFER: Match buffer space, longitudinal buffer, stopping/braking distance
+  const bufferPatterns = [
+    /buffer\s*(space|area|length|zone)?/i,
+    /longitudinal\s*buffer/i,
+    /stopping\s*distance/i,
+    /braking\s*distance/i,
+    /clear\s*(zone|space)/i,
+    /activity\s*area/i,
+    /work\s*(space|area|zone)/i,
+  ];
+  
+  // DEVICES: Match channelizing devices, cones, drums, signs, arrow boards, flaggers
+  const devicesPatterns = [
+    /channelizing\s*devices?/i,
+    /\bcones?\b/i,
+    /\bdrums?\b/i,
+    /barricades?/i,
+    /arrow\s*(board|panel)/i,
+    /\bflaggers?\b/i,
+    /delineators?/i,
+    /traffic\s*control\s*devices?/i,
+    /\bsigns?\b/i,
+  ];
+
+  // Helper to check if any pattern matches
+  const matchesAny = (text: string, patterns: RegExp[]): boolean => {
+    return patterns.some(p => p.test(text));
+  };
+
+  for (const chunk of handbookChunks) {
+    const text = chunk.text;
+
+    // Check spacing
+    if (!coverage.spacing && matchesAny(text, spacingPatterns)) {
+      coverage.spacing = true;
+      coverage.citations.push({
+        category: "spacing",
+        docName: chunk.docName,
+        page: chunk.pageNumber ?? undefined,
+        snippet: text.slice(0, 150),
+      });
+    }
+
+    // Check taper (single pattern match is sufficient with improved patterns)
+    if (!coverage.taper && matchesAny(text, taperPatterns)) {
+      coverage.taper = true;
+      coverage.citations.push({
+        category: "taper",
+        docName: chunk.docName,
+        page: chunk.pageNumber ?? undefined,
+        snippet: text.slice(0, 150),
+      });
+    }
+
+    // Check buffer
+    if (!coverage.buffer && matchesAny(text, bufferPatterns)) {
+      coverage.buffer = true;
+      coverage.citations.push({
+        category: "buffer",
+        docName: chunk.docName,
+        page: chunk.pageNumber ?? undefined,
+        snippet: text.slice(0, 150),
+      });
+    }
+
+    // Check devices
+    if (!coverage.devices && matchesAny(text, devicesPatterns)) {
+      coverage.devices = true;
+      coverage.citations.push({
+        category: "devices",
+        docName: chunk.docName,
+        page: chunk.pageNumber ?? undefined,
+        snippet: text.slice(0, 150),
+      });
+    }
+
+    // Early exit if all found
+    if (coverage.spacing && coverage.taper && coverage.buffer && coverage.devices) {
+      break;
+    }
+  }
+
+  console.log("[coverage-gate] Analysis result:", {
+    spacing: coverage.spacing,
+    taper: coverage.taper,
+    buffer: coverage.buffer,
+    devices: coverage.devices,
+    citationCount: coverage.citations.length,
+  });
+
+  return coverage;
+}
+
+/**
+ * Log detailed debug info when coverage gate fails.
+ */
+function logCoverageGateDebug(
+  handbookChunks: SourceChunk[],
+  coverage: CoverageInfo,
+  missingCritical: string[]
+): void {
+  console.log("[coverage-gate] ========== DEBUG: COVERAGE GATE BLOCKED ==========");
+  console.log("[coverage-gate] Missing categories:", missingCritical.join(", "));
+  console.log("[coverage-gate] Total handbook chunks retrieved:", handbookChunks.length);
+  
+  console.log("[coverage-gate] Coverage status:");
+  console.log("  - Spacing:", coverage.spacing);
+  console.log("  - Taper:", coverage.taper);
+  console.log("  - Buffer:", coverage.buffer);
+  console.log("  - Devices:", coverage.devices);
+  
+  console.log("[coverage-gate] Top 5 handbook chunks:");
+  handbookChunks.slice(0, 5).forEach((chunk, idx) => {
+    const sanitizedText = chunk.text
+      .replace(/\s+/g, " ")
+      .slice(0, 200);
+    console.log(`  [${idx + 1}] ${chunk.docName} p.${chunk.pageNumber ?? "?"}`);
+    console.log(`      Score: ${(chunk as { score?: number }).score ?? "N/A"}`);
+    console.log(`      Text: "${sanitizedText}..."`);
+  });
+  
+  console.log("[coverage-gate] ===================================================");
+}
+
+/**
+ * Check if critical coverage (spacing, taper, buffer) is missing.
+ * Returns list of missing categories, or empty array if all critical coverage is present.
+ */
+function getMissingCriticalCoverage(coverage: CoverageInfo): ("spacing" | "taper" | "buffer")[] {
+  const missing: ("spacing" | "taper" | "buffer")[] = [];
+  if (!coverage.spacing) missing.push("spacing");
+  if (!coverage.taper) missing.push("taper");
+  if (!coverage.buffer) missing.push("buffer");
+  return missing;
+}
+
+function buildSystemPrompt(deviceWarning: boolean = false): string {
+  const lines = [
     "You are a traffic control planning assistant.",
     "You draft temporary traffic control plans strictly based on the provided handbook and example excerpts.",
     "",
@@ -253,6 +434,15 @@ function buildSystemPrompt(): string {
     "- Every numeric value for sign spacing (A/B/C), taperLengthFt, bufferLengthFt, and device counts must be traceable to at least one provided excerpt.",
     "- For each such numeric field, include at least one matching citation string in the references array.",
     "- If you cannot find applicable guidance for any required numeric field in the excerpts, use reasonable MUTCD defaults and note this in assumptions[].",
+  ];
+
+  // Inject device warning if handbook guidance for devices is missing
+  if (deviceWarning) {
+    lines.push("");
+    lines.push("⚠️ DEVICE GUIDANCE MISSING: Handbook guidance for device counts (cones, signs, flaggers) was NOT found in the provided excerpts. Use conservative industry defaults for device counts and MARK THIS AS AN ASSUMPTION in the assumptions[] array. Be explicit: \"Device counts are estimates based on general MUTCD guidance; specific handbook values not available.\"");
+  }
+
+  lines.push(
     "",
     "Planner Notes (HIGH PRIORITY):",
     "- Treat planner notes as intentional guidance from a human planner.",
@@ -306,8 +496,10 @@ function buildSystemPrompt(): string {
     "- signSpacing MUST include all three labels: A, B, and C",
     "- All numeric values must be JSON numbers, not strings",
     "- arrowBoard must be true or false (boolean), not a string",
-    "- svgContent MUST be \"<svg></svg>\" - the server overwrites it",
-  ].join("\n");
+    "- svgContent MUST be \"<svg></svg>\" - the server overwrites it"
+  );
+
+  return lines.join("\n");
 }
 
 function buildContextPrompt(handbookText: string, exampleText: string): string {
@@ -521,6 +713,35 @@ export async function POST(req: NextRequest) {
 
   const { handbookChunks, exampleChunks } = await retrieveSupport(retrievalCtx);
 
+  // ===== COVERAGE GATE: Analyze handbook chunks for critical guidance =====
+  const coverage = analyzeHandbookCoverage(handbookChunks);
+  const missingCritical = getMissingCriticalCoverage(coverage);
+
+  // SAFETY KILL SWITCH: Block LLM call if critical coverage is missing
+  if (missingCritical.length > 0) {
+    // Log detailed debug info for troubleshooting
+    logCoverageGateDebug(handbookChunks, coverage, missingCritical);
+    
+    return jsonError(500, {
+      error: "Missing handbook guidance",
+      details: {
+        missing: missingCritical,
+        coverage,
+        message: `Cannot generate plan: The following mandatory handbook rules were not found in the current knowledge base: ${missingCritical.join(", ")}. Please ensure handbook documents contain guidance for sign spacing, taper lengths, and buffer distances.`,
+      },
+    });
+  }
+  
+  // Log success for debugging
+  console.log("[coverage-gate] PASSED: All critical coverage found");
+  console.log("[coverage-gate] Citations:", coverage.citations.map(c => `${c.category}: ${c.docName} p.${c.page}`));
+
+  // Track if devices guidance is missing (non-blocking, but inject warning)
+  const deviceWarning = !coverage.devices;
+  if (deviceWarning) {
+    console.log("[coverage-gate] WARNING: Device guidance missing, will inject LLM instruction");
+  }
+
   // Track if we're using fallback defaults
   const usingFallbackDefaults = handbookChunks.length === 0;
 
@@ -548,7 +769,7 @@ export async function POST(req: NextRequest) {
     )
     .join("\n\n");
 
-  const systemPrompt = buildSystemPrompt();
+  const systemPrompt = buildSystemPrompt(deviceWarning);
   const contextPrompt = buildContextPrompt(handbookText, exampleText);
   const userPrompt = buildUserPrompt(tcpReq);
 
@@ -766,11 +987,15 @@ Return ONLY the corrected JSON, no explanation.`;
               if (usingFallbackDefaults) {
                 assumptions.unshift("⚠️ No specific handbook guidance found for this road type. Using MUTCD general defaults. Verify against local jurisdiction requirements.");
               }
+              if (deviceWarning) {
+                assumptions.push("⚠️ Device counts are estimates based on general MUTCD guidance; specific handbook values not available.");
+              }
               
               const finalResponse: TcpDraftResponse = {
                 ...retryValidation.value,
                 assumptions,
                 svgContent,
+                coverage, // Include coverage info for UI
               };
               return NextResponse.json(finalResponse);
             } else {
@@ -802,11 +1027,15 @@ Return ONLY the corrected JSON, no explanation.`;
   if (usingFallbackDefaults) {
     assumptions.unshift("⚠️ No specific handbook guidance found for this road type. Using MUTCD general defaults. Verify against local jurisdiction requirements.");
   }
+  if (deviceWarning) {
+    assumptions.push("⚠️ Device counts are estimates based on general MUTCD guidance; specific handbook values not available.");
+  }
   
   const finalResponse: TcpDraftResponse = {
     ...responseValue,
     assumptions,
     svgContent,
+    coverage, // Include coverage info for UI confidence display
   };
 
   return NextResponse.json(finalResponse);
