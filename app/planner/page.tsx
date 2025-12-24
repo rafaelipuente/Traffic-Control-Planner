@@ -284,9 +284,18 @@ export default function PlannerPage() {
     : null;
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-600">
+    <div className="min-h-screen w-full bg-white font-sans text-slate-600 relative">
+      {/* Amber Glow Background */}
+      <div
+        className="absolute inset-0 z-0 pointer-events-none"
+        style={{
+          backgroundImage: `radial-gradient(125% 125% at 50% 90%, #ffffff 40%, #f59e0b 100%)`,
+          backgroundSize: "100% 100%",
+        }}
+      />
+      
       {/* Sticky Header - Command Center Style */}
-      <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200 shadow-sm">
+      <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200 shadow-sm relative">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded bg-[#FFB300] flex items-center justify-center shadow-sm">
@@ -308,7 +317,7 @@ export default function PlannerPage() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-32">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-32 relative z-10">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Left Column - Input (5 cols) */}
           <div className="lg:col-span-5 flex flex-col gap-6">
