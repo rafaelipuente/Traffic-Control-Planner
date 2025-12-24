@@ -8,9 +8,9 @@ interface GenerationProgressProps {
 
 const STEPS = [
   "Sending job details",
-  "Generating plan",
-  "Rendering diagram",
-  "Finalizing",
+  "Refining calculations with MUTCD guidance",
+  "Verifying spacing, taper & devices",
+  "Finalizing plan",
 ];
 
 export default function GenerationProgress({
@@ -29,105 +29,78 @@ export default function GenerationProgress({
 
   return (
     <div
-      className="flex flex-col items-center justify-center h-full min-h-[400px] p-8"
+      className="flex flex-col h-full p-6"
       role="status"
       aria-live="polite"
       aria-atomic="true"
       aria-busy={isGenerating}
       aria-label="TCP generation progress"
     >
-      {/* Spinner - decorative, hidden from screen readers */}
-      <div 
-        className="w-16 h-16 mb-6 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" 
-        aria-hidden="true"
-      />
-
-      {/* Title */}
-      <h3 className="text-xl font-semibold text-gray-800 mb-2">
-        Generating draft TCP…
-      </h3>
-
-      {/* Subtext */}
-      <p className="text-sm text-gray-500 mb-4">
-        This typically takes 10–20 seconds.
-      </p>
-
-      {/* Timer - hidden from live announcements to avoid noise every second */}
-      <div
-        className="text-lg font-mono text-orange-600 mb-6"
-        aria-hidden="true"
-      >
-        Elapsed: {formatTime(elapsedSeconds)}
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <div className="relative w-3 h-3">
+            <span className="absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75 animate-ping"></span>
+            <span className="relative inline-flex rounded-full h-3 w-3 bg-[#FFB300]"></span>
+          </div>
+          <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
+            Processing Request
+          </h3>
+        </div>
+        <span className="font-mono text-xs text-slate-400">
+          T+{formatTime(elapsedSeconds)}
+        </span>
       </div>
 
-      {/* Step List */}
-      <div className="w-full max-w-xs space-y-3" role="list" aria-label="Generation steps">
-        {STEPS.map((step, index) => {
-          const isComplete =
-            index < progressStep || (index === 3 && finalStepComplete);
-          const isCurrent = index === progressStep && !finalStepComplete;
-          const isFinalizing = index === 3 && isCurrent;
+      {/* Terminal Feed */}
+      <div className="bg-slate-50 border border-slate-200 rounded-sm p-4 mb-6 font-mono text-xs overflow-hidden">
+        <div className="space-y-2">
+          {STEPS.map((step, index) => {
+            const isComplete =
+              index < progressStep || (index === 3 && finalStepComplete);
+            const isCurrent = index === progressStep && !finalStepComplete;
+            
+            // Only show steps that have started
+            if (index > progressStep && !finalStepComplete) return null;
 
-          // Determine status text for screen readers
-          const statusText = isComplete
-            ? "completed"
-            : isCurrent
-              ? isFinalizing
-                ? "in progress, waiting for server"
-                : "in progress"
-              : "pending";
-
-          return (
-            <div
-              key={step}
-              role="listitem"
-              aria-label={`Step ${index + 1}: ${step}, ${statusText}`}
-              className={`flex items-center gap-3 px-4 py-2 rounded-lg transition-all ${
-                isComplete
-                  ? "bg-green-50 text-green-800"
-                  : isCurrent
-                    ? "bg-orange-50 text-orange-800"
-                    : "bg-gray-50 text-gray-400"
-              }`}
-            >
-              {/* Status Icon */}
-              <div className="flex-shrink-0 w-6 h-6 flex items-center justify-center" aria-hidden="true">
-                {isComplete ? (
-                  <svg
-                    className="w-5 h-5 text-green-600"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                ) : isFinalizing ? (
-                  // Pulse dots for finalizing step (waiting for API)
-                  <span className="flex gap-1">
-                    <span className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-pulse" style={{ animationDelay: "0ms" }} />
-                    <span className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-pulse" style={{ animationDelay: "150ms" }} />
-                    <span className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-pulse" style={{ animationDelay: "300ms" }} />
-                  </span>
-                ) : isCurrent ? (
-                  <div className="w-4 h-4 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <div className="w-4 h-4 border-2 border-gray-300 rounded-full" />
-                )}
+            return (
+              <div
+                key={step}
+                className={`flex items-start gap-2 transition-all ${
+                  isCurrent ? "text-slate-800" : "text-emerald-600"
+                }`}
+              >
+                <span className="text-slate-400 shrink-0">
+                  {isComplete ? "✓" : ">"}
+                </span>
+                <span className={isCurrent ? "font-bold" : ""}>
+                  {step}
+                  {isCurrent && (
+                    <span className="inline-block w-1.5 h-3 ml-1 bg-slate-800 animate-pulse align-middle" />
+                  )}
+                </span>
               </div>
+            );
+          })}
+        </div>
+      </div>
 
-              {/* Step Text */}
-              <span className="text-sm font-medium">
-                {step}
-              </span>
-            </div>
-          );
-        })}
+      {/* Skeleton Loader - Plan Preview */}
+      <div className="flex-1 space-y-4 animate-pulse opacity-50">
+        {/* Skeleton Summary */}
+        <div className="h-24 bg-slate-100 rounded-sm border border-slate-200"></div>
+        
+        {/* Skeleton Diagram */}
+        <div className="h-64 bg-slate-100 rounded-sm border border-slate-200"></div>
+        
+        {/* Skeleton Details */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="h-32 bg-slate-100 rounded-sm border border-slate-200"></div>
+          <div className="h-32 bg-slate-100 rounded-sm border border-slate-200"></div>
+        </div>
       </div>
       
-      {/* Live region for step announcements */}
+      {/* Live region for screen readers */}
       <div className="sr-only" aria-live="polite" aria-atomic="true">
         {progressStep < 3
           ? `Step ${progressStep + 1} of 4: ${STEPS[progressStep]}`
@@ -138,4 +111,3 @@ export default function GenerationProgress({
     </div>
   );
 }
-

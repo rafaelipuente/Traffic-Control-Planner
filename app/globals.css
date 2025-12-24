@@ -1,52 +1,117 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f9fafb;
-  --foreground: #111827;
-  --primary: #f97316;
-  --primary-dark: #ea580c;
-  --accent: #fde68a;
+  /* Palette: Asphalt & Amber */
+  --background: #f8fafc; /* slate-50 */
+  --foreground: #0f172a; /* slate-900 */
+  
+  /* Primary Accent: Safety Amber */
+  --primary: #ffb300; 
+  --primary-hover: #d97706; /* amber-600 for hover states */
+  --primary-foreground: #1e293b; /* slate-800 for text on amber */
+
+  /* Neutral Surface Colors */
+  --surface: #ffffff;
+  --surface-muted: #f1f5f9; /* slate-100 */
+  --border: #e2e8f0; /* slate-200 */
+  
+  /* Text Colors */
+  --text-heading: #0f172a; /* slate-900 */
+  --text-body: #475569; /* slate-600 */
+  --text-muted: #94a3b8; /* slate-400 */
+
+  /* Radius */
+  --radius: 0.25rem; /* 4px - rounded-sm */
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-primary: var(--primary);
-  --color-primary-dark: var(--primary-dark);
-  --color-accent: var(--accent);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border);
+  --color-text-heading: var(--text-heading);
+  --color-text-body: var(--text-body);
+  --color-text-muted: var(--text-muted);
+  
+  --radius-sm: var(--radius);
+  --radius-md: var(--radius); /* Override md to match sm for consistency */
+  --radius-lg: var(--radius); /* Override lg to match sm for consistency */
+  
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 body {
   background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  color: var(--text-body);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: var(--text-heading);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+/* Numeric values should use monospace */
+.font-mono-nums {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Mapbox overrides for consistent styling */
 .mapboxgl-ctrl-geocoder {
-  font-family: inherit;
-  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
-  border-radius: 0.5rem;
+  font-family: var(--font-sans);
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  border-radius: var(--radius);
+  background-color: #ffffff !important;
+  border: 1px solid var(--border);
 }
 
 .mapboxgl-ctrl-geocoder--input {
+  font-family: var(--font-sans);
   font-size: 0.875rem;
+  background-color: #ffffff !important;
+  color: var(--text-heading) !important;
+}
+
+.mapboxgl-ctrl-geocoder--input::placeholder {
+  color: var(--text-muted) !important;
 }
 
 .mapboxgl-ctrl-geocoder--input:focus {
   outline: 2px solid var(--primary);
-  outline-offset: 2px;
+  outline-offset: 0;
+}
+
+.mapboxgl-ctrl-geocoder--suggestion {
+  background-color: #ffffff !important;
+  color: var(--text-body) !important;
+}
+
+.mapboxgl-ctrl-geocoder--suggestion:hover {
+  background-color: var(--surface-muted) !important;
+}
+
+.mapboxgl-ctrl-geocoder .mapboxgl-ctrl-geocoder--pin-right > * {
+  top: 7px;
+  right: 7px;
 }
 
 /* Draw control styling */
 .mapbox-gl-draw_ctrl-draw-btn {
   background-color: white;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 
 .mapbox-gl-draw_ctrl-draw-btn:hover {
-  background-color: #f3f4f6;
+  background-color: var(--surface-muted);
 }
 
 /* Focus styles */
@@ -55,7 +120,7 @@ select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.2);
+  box-shadow: 0 0 0 1px var(--primary);
 }
 
 /* Button active state */
@@ -68,25 +133,35 @@ button,
 input,
 select,
 textarea {
-  transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+  transition: all 0.15s ease-in-out;
 }
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f5f9;
-  border-radius: 4px;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
-  border-radius: 4px;
+  border-radius: 99px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+}
+
+/* SVG Diagram Hover Effects */
+.diagram-zone {
+  transition: opacity 0.2s ease;
+  cursor: crosshair;
+}
+
+.diagram-zone:hover {
+  opacity: 0.9 !important;
+  filter: brightness(1.05);
 }

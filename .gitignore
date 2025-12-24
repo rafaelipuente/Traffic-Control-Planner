@@ -14,3 +14,10 @@ rag_index/
 
 # OS junk
 .DS_Store
+
+# IDE / Editor
+.cursor/
+.vscode/
+
+# TypeScript build info
+tsconfig.tsbuildinfo

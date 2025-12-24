@@ -6,8 +6,10 @@ import JobDetailsForm, { JobDetails } from "@/components/JobDetailsForm";
 import OutputPanel from "@/components/OutputPanel";
 import GenerationProgress from "@/components/GenerationProgress";
 import RagSearchTester from "@/components/RagSearchTester";
+import Toast from "@/components/Toast";
 import { TcpDraftResponse, Bbox, PolygonRing, CoverageInfo } from "@/lib/tcpTypes";
 import { GeometryOutput } from "@/components/MapSelector";
+import { DiagramGeometry } from "@/lib/diagram/types";
 
 // Dynamic import for MapSelector to avoid SSR issues with Mapbox
 const MapSelector = dynamic(() => import("@/components/MapSelector"), {
@@ -42,6 +44,10 @@ export default function PlannerPage() {
     coverage?: CoverageInfo;
     message?: string;
   } | null>(null);
+  
+  
+  // Toast notification state
+  const [showToast, setShowToast] = useState<boolean>(false);
 
   // Progress state
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
@@ -129,8 +135,23 @@ export default function PlannerPage() {
   const handleGeometryChange = useCallback((geo: GeometryOutput | null, label: string) => {
     setGeometry(geo);
     setLocationLabel(label);
-    // Clear stale errors when user draws new geometry or clears
-    setError(null);
+    
+    // HARD RESET: When geometry is cleared, reset ALL downstream state
+    // This prevents stale plan data from appearing after clear
+    if (geo === null) {
+      setResponse(null);
+      setRawJson(null);
+      setError(null);
+      setErrorDetails(null);
+      // Reset progress state in case of interrupted generation
+      setElapsedSeconds(0);
+      setProgressStep(0);
+      setFinalStepComplete(false);
+    } else {
+      // Clear stale errors when user draws new geometry
+      setError(null);
+      setErrorDetails(null);
+    }
   }, []);
 
   const handleJobDetailsChange = useCallback((details: JobDetails, isValid: boolean) => {
@@ -235,6 +256,7 @@ export default function PlannerPage() {
       if (isMountedRef.current) {
         setResponse(data);
         setRawJson(JSON.stringify(data, null, 2));
+        setShowToast(true); // Show refinement notification
       }
     } catch (err) {
       if (isMountedRef.current) {
@@ -251,6 +273,9 @@ export default function PlannerPage() {
     handleGenerate();
   }, [handleGenerate]);
 
+  // Dev tools state
+  const [isDevToolsOpen, setIsDevToolsOpen] = useState(false);
+
   // Selection summary
   const selectionSummary = geometry
     ? geometry.type === "bbox"
@@ -259,137 +284,216 @@ export default function PlannerPage() {
     : null;
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-600">
+      {/* Sticky Header - Command Center Style */}
+      <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-orange-500 flex items-center justify-center">
-              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            <div className="w-8 h-8 rounded bg-[#FFB300] flex items-center justify-center shadow-sm">
+              <svg className="w-5 h-5 text-slate-900" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
               </svg>
             </div>
             <div>
-              <h1 className="text-xl font-bold text-gray-900">TCP Planner</h1>
-              <p className="text-sm text-gray-500">AI-powered Traffic Control Plan Generator</p>
+              <h1 className="text-lg font-bold text-slate-900 tracking-tight leading-none">TCP Planner</h1>
+              <p className="text-xs text-slate-500 font-medium tracking-wide uppercase">Industrial Edition</p>
             </div>
+          </div>
+          
+          {/* Header Actions */}
+          <div className="flex items-center gap-4">
+             {/* Add any header actions here if needed */}
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left Column - Input */}
-          <div className="flex flex-col gap-6">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-32">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Left Column - Input (5 cols) */}
+          <div className="lg:col-span-5 flex flex-col gap-6">
             {/* Map Section */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-              <h2 className="text-lg font-semibold text-gray-800 mb-4">Work Zone Location</h2>
+            <div className="bg-white rounded-sm shadow-sm border border-slate-200 overflow-hidden">
+              <div className="p-3 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+                <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Work Zone Location</h2>
+                <span className="text-[10px] font-mono text-slate-400">MAP-01</span>
+              </div>
 
-              {mapToken ? (
-                <MapSelector mapToken={mapToken} onGeometryChange={handleGeometryChange} />
-              ) : (
-                <div className="w-full h-[400px] rounded-lg border border-red-300 bg-red-50 flex items-center justify-center p-4">
-                  <p className="text-red-600 text-center">
-                    Map token not configured. Set <code className="bg-red-100 px-1 rounded">NEXT_PUBLIC_MAP_TOKEN</code> in your environment.
-                  </p>
-                </div>
-              )}
-
-              {/* Selection Summary */}
-              {selectionSummary && (
-                <div className="mt-4 p-3 bg-orange-50 border border-orange-200 rounded-md">
-                  <h3 className="text-sm font-medium text-orange-800 mb-1">Selected Area</h3>
-                  <p className="text-sm text-orange-700 font-mono">{selectionSummary}</p>
-                  {locationLabel && (
-                    <p className="text-sm text-orange-600 mt-1">
-                      <span className="font-medium">Location:</span> {locationLabel}
+              <div className="p-4">
+                {mapToken ? (
+                  <div className="shadow-inner rounded-sm overflow-hidden border border-slate-200">
+                    <MapSelector mapToken={mapToken} onGeometryChange={handleGeometryChange} />
+                  </div>
+                ) : (
+                  <div className="w-full h-[400px] rounded-sm border border-red-300 bg-red-50 flex items-center justify-center p-4">
+                    <p className="text-red-600 text-center font-mono text-sm">
+                      ERR_MISSING_TOKEN: Set NEXT_PUBLIC_MAP_TOKEN
                     </p>
-                  )}
-                </div>
-              )}
+                  </div>
+                )}
+
+                {/* Selection Summary */}
+                {selectionSummary && (
+                  <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-sm">
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className="w-2 h-2 rounded-full bg-[#FFB300]"></div>
+                      <h3 className="text-xs font-bold text-slate-700 uppercase">Selected Area</h3>
+                    </div>
+                    <p className="text-xs font-mono text-slate-600 pl-4">{selectionSummary}</p>
+                    {locationLabel && (
+                      <p className="text-xs text-slate-500 pl-4 mt-1 truncate">
+                        {locationLabel}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Job Details Section */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-              <h2 className="text-lg font-semibold text-gray-800 mb-4">Job Details</h2>
-              <JobDetailsForm onChange={handleJobDetailsChange} />
+            <div className="bg-white rounded-sm shadow-sm border border-slate-200">
+              <div className="p-3 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+                <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Job Specifications</h2>
+                <span className="text-[10px] font-mono text-slate-400">FORM-01</span>
+              </div>
+              <div className="p-4">
+                <JobDetailsForm onChange={handleJobDetailsChange} />
+              </div>
             </div>
 
             {/* Generate Button */}
-            <button
-              type="button"
-              onClick={handleGenerate}
-              disabled={!canGenerate}
-              className={`w-full py-3 px-4 rounded-lg font-semibold text-lg transition-colors ${
-                canGenerate
-                  ? "bg-orange-500 text-white hover:bg-orange-600 shadow-md"
-                  : "bg-gray-200 text-gray-400 cursor-not-allowed"
-              }`}
-            >
-              {isLoading ? "Generating…" : "Generate Draft TCP"}
-            </button>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={handleGenerate}
+                disabled={!canGenerate}
+                className={`w-full py-3 px-4 rounded-sm font-bold text-base tracking-wide transition-all active:scale-[0.98] ${
+                  canGenerate
+                    ? "bg-[#FFB300] text-slate-900 hover:bg-[#F59E0B] shadow-md border border-[#D97706]"
+                    : "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
+                }`}
+              >
+                {isLoading 
+                  ? "PROCESSING..." 
+                  : response 
+                    ? "REGENERATE PLAN"
+                    : "GENERATE DRAFT PLAN"
+                }
+              </button>
+              {/* Helper text */}
+              <p className="text-[10px] text-slate-400 text-center font-mono">
+                AI VERIFICATION • MUTCD COMPLIANCE • AUTO-REFINEMENT
+              </p>
+            </div>
 
             {/* Status feedback */}
             {!canGenerate && !isLoading && (
-              <div className="text-sm text-center space-y-1">
+              <div className="text-xs text-center space-y-2">
                 {!geometry && (
-                  <p className="text-amber-600 bg-amber-50 px-3 py-2 rounded-md">
-                    ⚠️ Draw a polygon on the map to define the work zone.
-                  </p>
+                  <div className="flex items-center justify-center gap-2 text-amber-700 bg-amber-50 px-3 py-2 rounded-sm border border-amber-100">
+                    <span className="font-bold">⚠ ACTION REQUIRED:</span> Define work zone polygon
+                  </div>
                 )}
                 {geometry && !jobValid && (
-                  <p className="text-red-600 bg-red-50 px-3 py-2 rounded-md">
-                    ⚠️ Please fix the errors in the job details form above.
-                  </p>
+                  <div className="flex items-center justify-center gap-2 text-red-700 bg-red-50 px-3 py-2 rounded-sm border border-red-100">
+                    <span className="font-bold">⚠ INVALID INPUT:</span> Check job details
+                  </div>
                 )}
               </div>
             )}
             {canGenerate && (
-              <p className="text-sm text-green-600 text-center bg-green-50 px-3 py-2 rounded-md">
-                ✓ Ready to generate! Click the button above.
-              </p>
+              <div className="flex items-center justify-center gap-2 text-emerald-700 bg-emerald-50 px-3 py-2 rounded-sm border border-emerald-100 text-xs">
+                <span className="font-bold">✓ SYSTEM READY:</span> Awaiting generation command
+              </div>
             )}
           </div>
 
-          {/* Right Column - Output */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 min-h-[600px]">
-            {isLoading ? (
-              <GenerationProgress
-                elapsedSeconds={elapsedSeconds}
-                progressStep={progressStep}
-                finalStepComplete={finalStepComplete}
-              />
-            ) : (
-              <OutputPanel
-                response={response}
-                rawJson={rawJson}
-                isLoading={isLoading}
-                error={error}
-                errorDetails={errorDetails}
-                onRegenerate={handleRegenerate}
-                canRegenerate={canGenerate}
-                jobInfo={
-                  jobDetails
-                    ? {
-                        locationLabel: locationLabel || "Unknown location",
-                        roadType: jobDetails.roadType,
-                        postedSpeedMph: jobDetails.postedSpeedMph,
-                        workType: jobDetails.workType,
-                        workLengthFt: jobDetails.workLengthFt,
-                        isNight: jobDetails.isNight,
-                      }
-                    : null
-                }
-              />
-            )}
+          {/* Right Column - Output (7 cols) */}
+          <div className="lg:col-span-7 flex flex-col gap-6">
+            <div className="bg-white rounded-sm shadow-md border border-slate-200 min-h-[600px] flex flex-col h-full">
+              {isLoading ? (
+                <GenerationProgress
+                  elapsedSeconds={elapsedSeconds}
+                  progressStep={progressStep}
+                  finalStepComplete={finalStepComplete}
+                />
+              ) : (
+                <OutputPanel
+                  response={response}
+                  rawJson={rawJson}
+                  isLoading={isLoading}
+                  error={error}
+                  errorDetails={errorDetails}
+                  onRegenerate={handleRegenerate}
+                  canRegenerate={canGenerate}
+                  hasGeometry={geometry !== null}
+                  hasGeneratedPlan={response !== null}
+                  jobInfo={
+                    jobDetails
+                      ? {
+                          locationLabel: locationLabel || "Unknown location",
+                          roadType: jobDetails.roadType,
+                          postedSpeedMph: jobDetails.postedSpeedMph,
+                          workType: jobDetails.workType,
+                          workLengthFt: jobDetails.workLengthFt,
+                          isNight: jobDetails.isNight,
+                        }
+                      : null
+                  }
+                  geometry={
+                    geometry
+                      ? {
+                          type: geometry.type,
+                          bbox: geometry.type === "bbox" ? geometry.bbox : undefined,
+                          polygon: geometry.type === "polygon" 
+                            ? geometry.polygon.map(ring => 
+                                ring.map(coord => [coord[0], coord[1]] as [number, number])
+                              )
+                            : undefined,
+                        } as DiagramGeometry
+                      : null
+                  }
+                />
+              )}
+            </div>
           </div>
         </div>
 
-        {/* DEV ONLY: RAG Search Tester */}
-        {IS_DEV && <RagSearchTester />}
+        {/* DEV ONLY: Collapsible RAG Search Tester */}
+        {IS_DEV && (
+          <div className={`fixed bottom-0 left-0 right-0 z-50 transition-transform duration-300 ease-in-out ${
+            isDevToolsOpen ? "translate-y-0" : "translate-y-[calc(100%-40px)]"
+          }`}>
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="bg-slate-900 rounded-t-lg shadow-2xl border-t border-slate-700 overflow-hidden">
+                <button 
+                  onClick={() => setIsDevToolsOpen(!isDevToolsOpen)}
+                  className="w-full h-10 bg-slate-800 hover:bg-slate-700 flex items-center justify-between px-4 cursor-pointer transition-colors"
+                >
+                  <span className="text-xs font-mono font-bold text-[#FFB300]">
+                    🛠 DEV TOOLS // RAG SEARCH
+                  </span>
+                  <span className="text-slate-400">
+                    {isDevToolsOpen ? "▼ Collapse" : "▲ Expand"}
+                  </span>
+                </button>
+                <div className="p-4 bg-slate-100 max-h-[600px] overflow-y-auto">
+                  <RagSearchTester />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
+
+      {/* Toast notification for AI refinement feedback */}
+      <Toast
+        message="Plan Refined: AI updated spacing and taper based on MUTCD Table 6C-2."
+        visible={showToast}
+        onClose={() => setShowToast(false)}
+        duration={3000}
+        type="success"
+      />
     </div>
   );
 }
-
