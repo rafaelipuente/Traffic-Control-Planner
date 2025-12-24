@@ -3,11 +3,24 @@
 import { useState, useRef, useMemo } from "react";
 import { TcpDraftResponse, CoverageInfo } from "@/lib/tcpTypes";
 import DiagramPreview from "./DiagramPreview";
+import { TransitionPanel } from "./TransitionPanel";
 import {
   DiagramGeometry,
   DiagramJobData,
   DiagramPlanData,
 } from "@/lib/diagram/types";
+
+// Industrial transition variants - subtle fade + slight translateY
+const panelVariants = {
+  enter: { opacity: 0, y: 6 },
+  center: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: -6 },
+};
+
+const panelTransition = {
+  duration: 0.3,
+  ease: "easeInOut" as const,
+};
 
 export interface JobInfoForExport {
   locationLabel: string;
@@ -279,6 +292,16 @@ export default function OutputPanel({
   const isPreview = hasGeometry && !isGenerated;
   const isEmpty = !hasGeometry && !isGenerated;
 
+  // Calculate panel state index for TransitionPanel
+  // 0: empty, 1: preview, 2: loading, 3: error, 4: generated
+  const panelStateIndex = useMemo(() => {
+    if (isLoading) return 2;
+    if (error) return 3;
+    if (isGenerated && response) return 4;
+    if (isPreview) return 1;
+    return 0; // empty
+  }, [isLoading, error, isGenerated, response, isPreview]);
+
   return (
     <div className="flex flex-col h-full bg-white relative">
       {/* 1) Persistent Header */}
@@ -325,10 +348,15 @@ export default function OutputPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 scroll-smooth">
-        {/* =====================================
-            STATE 1: EMPTY (No geometry)
-            ===================================== */}
-        {isEmpty && !isLoading && !error && (
+        <TransitionPanel
+          activeIndex={panelStateIndex}
+          variants={panelVariants}
+          transition={panelTransition}
+          className="h-full"
+        >
+          {/* =====================================
+              STATE 0: EMPTY (No geometry)
+              ===================================== */}
           <div className="flex flex-col gap-8 h-full">
             {/* Structured Empty State Block */}
             <div className="flex flex-col items-center justify-center text-center py-8 border-b border-dashed border-slate-200">
@@ -390,12 +418,10 @@ export default function OutputPanel({
               </div>
             </div>
           </div>
-        )}
 
-        {/* =====================================
-            STATE 2: PREVIEW (Geometry exists, no AI plan yet)
-            ===================================== */}
-        {isPreview && !isLoading && !error && (
+          {/* =====================================
+              STATE 1: PREVIEW (Geometry exists, no AI plan yet)
+              ===================================== */}
           <div className="flex flex-col gap-6">
             {/* Diagram Preview - Geometry Only */}
             <div className="bg-white border border-slate-200 rounded-sm shadow-lg p-1 relative overflow-hidden group">
@@ -427,19 +453,19 @@ export default function OutputPanel({
               </div>
             </div>
           </div>
-        )}
 
-        {/* Loading state */}
-        {isLoading && (
+          {/* =====================================
+              STATE 2: LOADING
+              ===================================== */}
           <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-center p-8">
             <div className="w-12 h-12 mb-4 border-4 border-slate-200 border-t-[#FFB300] rounded-full animate-spin" />
             <h3 className="text-lg font-semibold text-slate-800 mb-2">Generating draft TCP…</h3>
             <p className="text-sm text-slate-500">This may take a few seconds.</p>
           </div>
-        )}
 
-        {/* Error state */}
-        {error && (
+          {/* =====================================
+              STATE 3: ERROR
+              ===================================== */}
           <div className="p-0">
             {errorDetails?.coverage && errorDetails?.missing ? (
               // Safety Block Alert for Coverage Gate errors
@@ -586,29 +612,29 @@ export default function OutputPanel({
               </button>
             )}
           </div>
-        )}
 
-        {/* =====================================
-            STATE 3: AI-GENERATED PLAN (Full response)
-            ===================================== */}
-        {isGenerated && response && (
+          {/* =====================================
+              STATE 4: AI-GENERATED PLAN (Full response)
+              ===================================== */}
           <div className="flex flex-col gap-6">
-             {/* ID Badge handled in header now */}
-             <div className="flex justify-end -mt-2">
-                 <span className="text-[10px] text-slate-400 font-mono">ID: {Math.random().toString(36).substr(2, 9).toUpperCase()}</span>
-             </div>
+            {response ? (
+              <>
+                {/* ID Badge handled in header now */}
+                <div className="flex justify-end -mt-2">
+                    <span className="text-[10px] text-slate-400 font-mono">ID: {Math.random().toString(36).substr(2, 9).toUpperCase()}</span>
+                </div>
 
-            {/* Exportable content container */}
-            <div ref={exportRef} data-testid="tcp-output-panel" className="flex flex-col gap-6">
-              
-              {/* Summary Card */}
-              <div className="bg-white border border-slate-200 rounded-sm p-4 shadow-sm relative">
-                <div className="absolute top-0 left-0 w-1 h-full bg-slate-200"></div>
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 pl-2">
-                  Executive Summary
-                </h3>
-                <p className="text-sm text-slate-700 leading-relaxed pl-2">{response.summary}</p>
-              </div>
+                {/* Exportable content container */}
+                <div ref={exportRef} data-testid="tcp-output-panel" className="flex flex-col gap-6">
+                  
+                  {/* Summary Card */}
+                  <div className="bg-white border border-slate-200 rounded-sm p-4 shadow-sm relative">
+                    <div className="absolute top-0 left-0 w-1 h-full bg-slate-200"></div>
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 pl-2">
+                      Executive Summary
+                    </h3>
+                    <p className="text-sm text-slate-700 leading-relaxed pl-2">{response.summary}</p>
+                  </div>
 
               {/* Plan Confidence Card */}
               {response.coverage && (
@@ -851,8 +877,10 @@ export default function OutputPanel({
                 )}
               </button>
             </div>
+              </>
+            ) : null}
           </div>
-        )}
+        </TransitionPanel>
       </div>
     </div>
   );
