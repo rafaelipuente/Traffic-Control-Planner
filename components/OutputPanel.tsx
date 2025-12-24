@@ -5,6 +5,7 @@ import { TcpDraftResponse, CoverageInfo } from "@/lib/tcpTypes";
 import DiagramPreview from "./DiagramPreview";
 import { TransitionPanel } from "./TransitionPanel";
 import { InView } from "./motion/InView";
+import { AnimatedValue } from "./motion/AnimatedValue";
 import {
   DiagramGeometry,
   DiagramJobData,
@@ -753,7 +754,9 @@ export default function OutputPanel({
                                   {response.plan.signSpacing.map((sign) => (
                                     <tr key={sign.label} className="bg-white hover:bg-slate-50 transition-colors">
                                       <td className="py-2 px-3 font-bold text-amber-600 font-mono">{sign.label}</td>
-                                      <td className="py-2 px-3 text-right text-slate-700 font-mono">{sign.distanceFt} ft</td>
+                                      <td className="py-2 px-3 text-right text-slate-700 font-mono">
+                                        <AnimatedValue value={sign.distanceFt} suffix=" ft" className="font-mono" />
+                                      </td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -767,14 +770,22 @@ export default function OutputPanel({
                               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Taper Length</span>
                               <div className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-sm">
                                 <span className="text-xs text-slate-500">Calculated</span>
-                                <span className="text-sm font-bold text-slate-900 font-mono">{response.plan.taperLengthFt} ft</span>
+                                <AnimatedValue 
+                                  value={response.plan.taperLengthFt} 
+                                  suffix=" ft" 
+                                  className="text-sm font-bold text-slate-900 font-mono" 
+                                />
                               </div>
                             </div>
                             <div>
                               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Buffer Length</span>
                               <div className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-sm">
                                 <span className="text-xs text-slate-500">Longitudinal</span>
-                                <span className="text-sm font-bold text-slate-900 font-mono">{response.plan.bufferLengthFt} ft</span>
+                                <AnimatedValue 
+                                  value={response.plan.bufferLengthFt} 
+                                  suffix=" ft" 
+                                  className="text-sm font-bold text-slate-900 font-mono" 
+                                />
                               </div>
                             </div>
                           </div>
@@ -786,11 +797,17 @@ export default function OutputPanel({
                           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                             <div className="p-2 border border-slate-200 rounded-sm bg-slate-50">
                               <span className="text-[10px] text-slate-500 uppercase block mb-1">Cones</span>
-                              <span className="text-lg font-bold text-slate-900 font-mono">{response.plan.devices.cones}</span>
+                              <AnimatedValue 
+                                value={response.plan.devices.cones} 
+                                className="text-lg font-bold text-slate-900 font-mono" 
+                              />
                             </div>
                             <div className="p-2 border border-slate-200 rounded-sm bg-slate-50">
                               <span className="text-[10px] text-slate-500 uppercase block mb-1">Signs</span>
-                              <span className="text-lg font-bold text-slate-900 font-mono">{response.plan.devices.signs}</span>
+                              <AnimatedValue 
+                                value={response.plan.devices.signs} 
+                                className="text-lg font-bold text-slate-900 font-mono" 
+                              />
                             </div>
                             <div className="p-2 border border-slate-200 rounded-sm bg-slate-50">
                               <span className="text-[10px] text-slate-500 uppercase block mb-1">Arrow Board</span>
@@ -800,7 +817,10 @@ export default function OutputPanel({
                             </div>
                             <div className="p-2 border border-slate-200 rounded-sm bg-slate-50">
                               <span className="text-[10px] text-slate-500 uppercase block mb-1">Flaggers</span>
-                              <span className="text-lg font-bold text-slate-900 font-mono">{response.plan.devices.flaggers}</span>
+                              <AnimatedValue 
+                                value={response.plan.devices.flaggers} 
+                                className="text-lg font-bold text-slate-900 font-mono" 
+                              />
                             </div>
                           </div>
                         </div>
