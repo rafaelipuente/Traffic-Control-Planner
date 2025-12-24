@@ -4,6 +4,7 @@ import { useState, useRef, useMemo } from "react";
 import { TcpDraftResponse, CoverageInfo } from "@/lib/tcpTypes";
 import DiagramPreview from "./DiagramPreview";
 import { TransitionPanel } from "./TransitionPanel";
+import { InView } from "./motion/InView";
 import {
   DiagramGeometry,
   DiagramJobData,
@@ -359,46 +360,51 @@ export default function OutputPanel({
               ===================================== */}
           <div className="flex flex-col gap-8 h-full">
             {/* Structured Empty State Block */}
-            <div className="flex flex-col items-center justify-center text-center py-8 border-b border-dashed border-slate-200">
-              <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mb-3 border border-slate-100">
-                <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
+            <InView variants="fadeUp" delay={0}>
+              <div className="flex flex-col items-center justify-center text-center py-8 border-b border-dashed border-slate-200">
+                <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mb-3 border border-slate-100">
+                  <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </div>
+                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide mb-1">
+                  No Work Zone Selected
+                </h3>
+                <p className="text-xs text-slate-500 max-w-xs leading-relaxed">
+                  Draw a polygon on the map to activate the schematic preview.
+                </p>
+                <div className="mt-4 text-[10px] font-mono text-slate-400 bg-slate-50 px-2 py-1 rounded-sm border border-slate-100">
+                  Step 1 of 3: Define Work Zone
+                </div>
               </div>
-              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide mb-1">
-                No Work Zone Selected
-              </h3>
-              <p className="text-xs text-slate-500 max-w-xs leading-relaxed">
-                Draw a polygon on the map to activate the schematic preview.
-              </p>
-              <div className="mt-4 text-[10px] font-mono text-slate-400 bg-slate-50 px-2 py-1 rounded-sm border border-slate-100">
-                Step 1 of 3: Define Work Zone
-              </div>
-            </div>
+            </InView>
 
             {/* Dormant Diagram Preview */}
-            <div className="space-y-2 opacity-60">
-               <div className="flex items-center justify-between">
-                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Schematic Preview</span>
-                 <span className="text-[10px] font-mono text-slate-300">INACTIVE</span>
-               </div>
-               <div className="w-full h-48 bg-slate-50 border border-dashed border-slate-200 rounded-sm relative overflow-hidden flex items-center justify-center">
-                 {/* Grid pattern background */}
-                 <div className="absolute inset-0 opacity-[0.03]" 
-                      style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '20px 20px' }} 
-                 />
-                 <div className="text-center z-10">
-                   <span className="block text-xs font-bold text-slate-300 uppercase tracking-widest mb-1">Dormant</span>
-                   <svg className="w-8 h-8 text-slate-200 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                   </svg>
-                 </div>
-               </div>
-            </div>
+            <InView variants="fadeUp" delay={0.08}>
+              <div className="space-y-2 opacity-60">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Schematic Preview</span>
+                  <span className="text-[10px] font-mono text-slate-300">INACTIVE</span>
+                </div>
+                <div className="w-full h-48 bg-slate-50 border border-dashed border-slate-200 rounded-sm relative overflow-hidden flex items-center justify-center">
+                  {/* Grid pattern background */}
+                  <div className="absolute inset-0 opacity-[0.03]" 
+                       style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '20px 20px' }} 
+                  />
+                  <div className="text-center z-10">
+                    <span className="block text-xs font-bold text-slate-300 uppercase tracking-widest mb-1">Dormant</span>
+                    <svg className="w-8 h-8 text-slate-200 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            </InView>
 
             {/* Placeholder / Ghost Sections */}
-            <div className="space-y-6 opacity-40 select-none grayscale">
+            <InView variants="fade" delay={0.16}>
+              <div className="space-y-6 opacity-40 select-none grayscale">
               {/* Summary Skeleton */}
               <div className="space-y-2">
                 <div className="h-3 w-32 bg-slate-100 rounded-sm" />
@@ -416,7 +422,8 @@ export default function OutputPanel({
                    <div className="h-24 w-full bg-slate-50 border border-slate-100 rounded-sm" />
                 </div>
               </div>
-            </div>
+              </div>
+            </InView>
           </div>
 
           {/* =====================================
@@ -424,34 +431,38 @@ export default function OutputPanel({
               ===================================== */}
           <div className="flex flex-col gap-6">
             {/* Diagram Preview - Geometry Only */}
-            <div className="bg-white border border-slate-200 rounded-sm shadow-lg p-1 relative overflow-hidden group">
-              <div className="absolute top-0 left-0 w-full h-1 bg-amber-400 opacity-50"></div>
-              <DiagramPreview
-                geometry={geometry!}
-                job={diagramJob}
-                plan={null}
-                height={400}
-              />
-              {/* Overlay Warning */}
-              <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur text-xs font-mono text-slate-500 px-2 py-1 rounded-sm border border-slate-200 shadow-sm pointer-events-none">
-                PREVIEW ONLY // NOT VERIFIED
+            <InView variants="fadeUp" delay={0}>
+              <div className="bg-white border border-slate-200 rounded-sm shadow-lg p-1 relative overflow-hidden group">
+                <div className="absolute top-0 left-0 w-full h-1 bg-amber-400 opacity-50"></div>
+                <DiagramPreview
+                  geometry={geometry!}
+                  job={diagramJob}
+                  plan={null}
+                  height={400}
+                />
+                {/* Overlay Warning */}
+                <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur text-xs font-mono text-slate-500 px-2 py-1 rounded-sm border border-slate-200 shadow-sm pointer-events-none">
+                  PREVIEW ONLY // NOT VERIFIED
+                </div>
               </div>
-            </div>
+            </InView>
             
             {/* Preview disclaimer */}
-            <div className="bg-amber-50/50 border border-amber-100 rounded-sm p-4 flex gap-3">
-              <div className="text-amber-500 mt-0.5">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            <InView variants="fadeUp" delay={0.08}>
+              <div className="bg-amber-50/50 border border-amber-100 rounded-sm p-4 flex gap-3">
+                <div className="text-amber-500 mt-0.5">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-amber-800 uppercase tracking-wide mb-1">
+                    Awaiting Generation
+                  </p>
+                  <p className="text-xs text-amber-700/80 leading-relaxed">
+                    Current values are placeholders. Generate the plan to apply MUTCD rules for spacing, taper lengths, and device counts.
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-xs font-bold text-amber-800 uppercase tracking-wide mb-1">
-                  Awaiting Generation
-                </p>
-                <p className="text-xs text-amber-700/80 leading-relaxed">
-                  Current values are placeholders. Generate the plan to apply MUTCD rules for spacing, taper lengths, and device counts.
-                </p>
-              </div>
-            </div>
+            </InView>
           </div>
 
           {/* =====================================
@@ -628,199 +639,211 @@ export default function OutputPanel({
                 <div ref={exportRef} data-testid="tcp-output-panel" className="flex flex-col gap-6">
                   
                   {/* Summary Card */}
-                  <div className="bg-white border border-slate-200 rounded-sm p-4 shadow-sm relative">
-                    <div className="absolute top-0 left-0 w-1 h-full bg-slate-200"></div>
-                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 pl-2">
-                      Executive Summary
-                    </h3>
-                    <p className="text-sm text-slate-700 leading-relaxed pl-2">{response.summary}</p>
-                  </div>
-
-              {/* Plan Confidence Card */}
-              {response.coverage && (
-                <div className="bg-emerald-50/30 border border-emerald-100 rounded-sm p-4">
-                  <div className="flex items-center gap-2 mb-3">
-                    <h3 className="text-xs font-bold text-emerald-800 uppercase tracking-wide">
-                      Compliance Verification
-                    </h3>
-                  </div>
-                  
-                  {/* Coverage Checklist */}
-                  <div className="grid grid-cols-4 gap-2 mb-3">
-                    {[
-                      { key: 'spacing', label: 'Spacing' },
-                      { key: 'taper', label: 'Taper' },
-                      { key: 'buffer', label: 'Buffer' },
-                      { key: 'devices', label: 'Devices' }
-                    ].map(({ key, label }) => {
-                      const isCovered = response.coverage?.[key as keyof CoverageInfo] ?? false;
-                      return (
-                        <div key={key} className={`flex items-center gap-1.5 px-2 py-1.5 rounded-sm border ${
-                          isCovered ? "bg-emerald-100/50 border-emerald-200 text-emerald-800" : "bg-red-50 border-red-100 text-red-700"
-                        }`}>
-                          <span className="text-[10px]">{isCovered ? "✓" : "✗"}</span>
-                          <span className="text-[10px] font-bold uppercase">{label}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Verified Sources */}
-                  {response.coverage.citations && response.coverage.citations.length > 0 && (
-                    <div className="border-t border-emerald-100 pt-2 mt-2">
-                      <div className="flex flex-wrap gap-1.5">
-                        {response.coverage.citations.map((citation, idx) => (
-                          <span
-                            key={idx}
-                            className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-white border border-emerald-200 rounded-sm text-[10px] text-emerald-700 shadow-sm"
-                            title={citation.snippet || undefined}
-                          >
-                            <span className="font-bold uppercase">{citation.category}</span>
-                            <span className="text-emerald-300">|</span>
-                            <span className="font-mono">{citation.docName}</span>
-                            {citation.page && <span className="text-emerald-400 font-mono">p.{citation.page}</span>}
-                          </span>
-                        ))}
-                      </div>
+                  <InView variants="fadeUp" delay={0}>
+                    <div className="bg-white border border-slate-200 rounded-sm p-4 shadow-sm relative">
+                      <div className="absolute top-0 left-0 w-1 h-full bg-slate-200"></div>
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 pl-2">
+                        Executive Summary
+                      </h3>
+                      <p className="text-sm text-slate-700 leading-relaxed pl-2">{response.summary}</p>
                     </div>
+                  </InView>
+
+                  {/* Plan Confidence Card */}
+                  {response.coverage && (
+                    <InView variants="fadeUp" delay={0.06}>
+                      <div className="bg-emerald-50/30 border border-emerald-100 rounded-sm p-4">
+                        <div className="flex items-center gap-2 mb-3">
+                          <h3 className="text-xs font-bold text-emerald-800 uppercase tracking-wide">
+                            Compliance Verification
+                          </h3>
+                        </div>
+                        
+                        {/* Coverage Checklist */}
+                        <div className="grid grid-cols-4 gap-2 mb-3">
+                          {[
+                            { key: 'spacing', label: 'Spacing' },
+                            { key: 'taper', label: 'Taper' },
+                            { key: 'buffer', label: 'Buffer' },
+                            { key: 'devices', label: 'Devices' }
+                          ].map(({ key, label }) => {
+                            const isCovered = response.coverage?.[key as keyof CoverageInfo] ?? false;
+                            return (
+                              <div key={key} className={`flex items-center gap-1.5 px-2 py-1.5 rounded-sm border ${
+                                isCovered ? "bg-emerald-100/50 border-emerald-200 text-emerald-800" : "bg-red-50 border-red-100 text-red-700"
+                              }`}>
+                                <span className="text-[10px]">{isCovered ? "✓" : "✗"}</span>
+                                <span className="text-[10px] font-bold uppercase">{label}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Verified Sources */}
+                        {response.coverage.citations && response.coverage.citations.length > 0 && (
+                          <div className="border-t border-emerald-100 pt-2 mt-2">
+                            <div className="flex flex-wrap gap-1.5">
+                              {response.coverage.citations.map((citation, idx) => (
+                                <span
+                                  key={idx}
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-white border border-emerald-200 rounded-sm text-[10px] text-emerald-700 shadow-sm"
+                                  title={citation.snippet || undefined}
+                                >
+                                  <span className="font-bold uppercase">{citation.category}</span>
+                                  <span className="text-emerald-300">|</span>
+                                  <span className="font-mono">{citation.docName}</span>
+                                  {citation.page && <span className="text-emerald-400 font-mono">p.{citation.page}</span>}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </InView>
                   )}
-                </div>
-              )}
 
-              {/* Dynamic Diagram Preview - AI Verified */}
-              <div className="bg-white border border-slate-200 rounded-sm shadow-lg p-1 relative group">
-                <div className="absolute top-0 left-0 w-full h-1 bg-emerald-500"></div>
-                <div className="absolute top-3 right-3 z-10">
-                   <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-sm border border-emerald-100 shadow-sm">
-                    VERIFIED
-                  </span>
-                </div>
-                <DiagramPreview
-                  geometry={geometry}
-                  job={diagramJob}
-                  plan={diagramPlan}
-                  height={500}
-                />
-              </div>
-
-              {/* Plan Details */}
-              <div className="bg-white border border-slate-200 rounded-sm shadow-sm overflow-hidden">
-                <div className="p-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
-                  <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wide">
-                    Plan Specifications
-                  </h3>
-                  <span className="text-[10px] font-mono text-slate-400">spec_v1.0</span>
-                </div>
-
-                <div className="p-4 space-y-6">
-                  {/* Layout */}
-                  <div>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Layout Strategy</span>
-                    <p className="text-sm font-medium text-slate-800">{response.plan.recommendedLayout}</p>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {/* Sign Spacing Table */}
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Sign Spacing</span>
-                      <div className="border border-slate-200 rounded-sm overflow-hidden">
-                        <table className="w-full text-sm">
-                          <thead className="bg-slate-50 border-b border-slate-200">
-                            <tr>
-                              <th className="py-1.5 px-3 text-left text-[10px] font-bold text-slate-500 uppercase">Sign</th>
-                              <th className="py-1.5 px-3 text-right text-[10px] font-bold text-slate-500 uppercase">Dist</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {response.plan.signSpacing.map((sign) => (
-                              <tr key={sign.label} className="bg-white hover:bg-slate-50 transition-colors">
-                                <td className="py-2 px-3 font-bold text-amber-600 font-mono">{sign.label}</td>
-                                <td className="py-2 px-3 text-right text-slate-700 font-mono">{sign.distanceFt} ft</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-
-                    {/* Taper & Buffer */}
-                    <div className="space-y-3">
-                      <div>
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Taper Length</span>
-                        <div className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-sm">
-                          <span className="text-xs text-slate-500">Calculated</span>
-                          <span className="text-sm font-bold text-slate-900 font-mono">{response.plan.taperLengthFt} ft</span>
-                        </div>
-                      </div>
-                      <div>
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Buffer Length</span>
-                        <div className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-sm">
-                          <span className="text-xs text-slate-500">Longitudinal</span>
-                          <span className="text-sm font-bold text-slate-900 font-mono">{response.plan.bufferLengthFt} ft</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Devices */}
-                  <div>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Required Devices</span>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      <div className="p-2 border border-slate-200 rounded-sm bg-slate-50">
-                        <span className="text-[10px] text-slate-500 uppercase block mb-1">Cones</span>
-                        <span className="text-lg font-bold text-slate-900 font-mono">{response.plan.devices.cones}</span>
-                      </div>
-                      <div className="p-2 border border-slate-200 rounded-sm bg-slate-50">
-                        <span className="text-[10px] text-slate-500 uppercase block mb-1">Signs</span>
-                        <span className="text-lg font-bold text-slate-900 font-mono">{response.plan.devices.signs}</span>
-                      </div>
-                      <div className="p-2 border border-slate-200 rounded-sm bg-slate-50">
-                        <span className="text-[10px] text-slate-500 uppercase block mb-1">Arrow Board</span>
-                        <span className="text-lg font-bold text-slate-900 font-mono">
-                          {response.plan.devices.arrowBoard ? "YES" : "NO"}
+                  {/* Dynamic Diagram Preview - AI Verified */}
+                  <InView variants="fadeUp" delay={0.12}>
+                    <div className="bg-white border border-slate-200 rounded-sm shadow-lg p-1 relative group">
+                      <div className="absolute top-0 left-0 w-full h-1 bg-emerald-500"></div>
+                      <div className="absolute top-3 right-3 z-10">
+                         <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-sm border border-emerald-100 shadow-sm">
+                          VERIFIED
                         </span>
                       </div>
-                      <div className="p-2 border border-slate-200 rounded-sm bg-slate-50">
-                        <span className="text-[10px] text-slate-500 uppercase block mb-1">Flaggers</span>
-                        <span className="text-lg font-bold text-slate-900 font-mono">{response.plan.devices.flaggers}</span>
+                      <DiagramPreview
+                        geometry={geometry}
+                        job={diagramJob}
+                        plan={diagramPlan}
+                        height={500}
+                      />
+                    </div>
+                  </InView>
+
+                  {/* Plan Details */}
+                  <InView variants="fadeUp" delay={0.18}>
+                    <div className="bg-white border border-slate-200 rounded-sm shadow-sm overflow-hidden">
+                      <div className="p-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+                        <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                          Plan Specifications
+                        </h3>
+                        <span className="text-[10px] font-mono text-slate-400">spec_v1.0</span>
+                      </div>
+
+                      <div className="p-4 space-y-6">
+                        {/* Layout */}
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Layout Strategy</span>
+                          <p className="text-sm font-medium text-slate-800">{response.plan.recommendedLayout}</p>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          {/* Sign Spacing Table */}
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Sign Spacing</span>
+                            <div className="border border-slate-200 rounded-sm overflow-hidden">
+                              <table className="w-full text-sm">
+                                <thead className="bg-slate-50 border-b border-slate-200">
+                                  <tr>
+                                    <th className="py-1.5 px-3 text-left text-[10px] font-bold text-slate-500 uppercase">Sign</th>
+                                    <th className="py-1.5 px-3 text-right text-[10px] font-bold text-slate-500 uppercase">Dist</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                  {response.plan.signSpacing.map((sign) => (
+                                    <tr key={sign.label} className="bg-white hover:bg-slate-50 transition-colors">
+                                      <td className="py-2 px-3 font-bold text-amber-600 font-mono">{sign.label}</td>
+                                      <td className="py-2 px-3 text-right text-slate-700 font-mono">{sign.distanceFt} ft</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+
+                          {/* Taper & Buffer */}
+                          <div className="space-y-3">
+                            <div>
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Taper Length</span>
+                              <div className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-sm">
+                                <span className="text-xs text-slate-500">Calculated</span>
+                                <span className="text-sm font-bold text-slate-900 font-mono">{response.plan.taperLengthFt} ft</span>
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Buffer Length</span>
+                              <div className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-sm">
+                                <span className="text-xs text-slate-500">Longitudinal</span>
+                                <span className="text-sm font-bold text-slate-900 font-mono">{response.plan.bufferLengthFt} ft</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Devices */}
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Required Devices</span>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <div className="p-2 border border-slate-200 rounded-sm bg-slate-50">
+                              <span className="text-[10px] text-slate-500 uppercase block mb-1">Cones</span>
+                              <span className="text-lg font-bold text-slate-900 font-mono">{response.plan.devices.cones}</span>
+                            </div>
+                            <div className="p-2 border border-slate-200 rounded-sm bg-slate-50">
+                              <span className="text-[10px] text-slate-500 uppercase block mb-1">Signs</span>
+                              <span className="text-lg font-bold text-slate-900 font-mono">{response.plan.devices.signs}</span>
+                            </div>
+                            <div className="p-2 border border-slate-200 rounded-sm bg-slate-50">
+                              <span className="text-[10px] text-slate-500 uppercase block mb-1">Arrow Board</span>
+                              <span className="text-lg font-bold text-slate-900 font-mono">
+                                {response.plan.devices.arrowBoard ? "YES" : "NO"}
+                              </span>
+                            </div>
+                            <div className="p-2 border border-slate-200 rounded-sm bg-slate-50">
+                              <span className="text-[10px] text-slate-500 uppercase block mb-1">Flaggers</span>
+                              <span className="text-lg font-bold text-slate-900 font-mono">{response.plan.devices.flaggers}</span>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </div>
-              </div>
+                  </InView>
 
-              {/* Assumptions */}
-              {response.assumptions.length > 0 && (
-                <div className="bg-white border border-slate-200 rounded-sm p-4 shadow-sm">
-                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">
-                    Notes & Assumptions
-                  </h3>
-                  <ul className="list-disc list-inside text-xs text-slate-600 space-y-1 marker:text-slate-300">
-                    {response.assumptions.map((a, i) => (
-                      <li key={i}>{a}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+                  {/* Assumptions */}
+                  {response.assumptions.length > 0 && (
+                    <InView variants="fadeUp" delay={0.24}>
+                      <div className="bg-white border border-slate-200 rounded-sm p-4 shadow-sm">
+                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">
+                          Notes & Assumptions
+                        </h3>
+                        <ul className="list-disc list-inside text-xs text-slate-600 space-y-1 marker:text-slate-300">
+                          {response.assumptions.map((a, i) => (
+                            <li key={i}>{a}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </InView>
+                  )}
 
-              {/* References */}
-              {response.references.length > 0 && (
-                <div className="bg-white border border-slate-200 rounded-sm p-4 shadow-sm">
-                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">
-                    Reference Docs
-                  </h3>
-                  <div className="flex flex-wrap gap-2">
-                    {response.references.map((ref, i) => (
-                      <span
-                        key={i}
-                        className="inline-block bg-slate-100 text-slate-600 text-[10px] font-medium px-2 py-1 rounded-sm border border-slate-200 font-mono"
-                      >
-                        {ref}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+                  {/* References */}
+                  {response.references.length > 0 && (
+                    <InView variants="fadeUp" delay={0.3}>
+                      <div className="bg-white border border-slate-200 rounded-sm p-4 shadow-sm">
+                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">
+                          Reference Docs
+                        </h3>
+                        <div className="flex flex-wrap gap-2">
+                          {response.references.map((ref, i) => (
+                            <span
+                              key={i}
+                              className="inline-block bg-slate-100 text-slate-600 text-[10px] font-medium px-2 py-1 rounded-sm border border-slate-200 font-mono"
+                            >
+                              {ref}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </InView>
+                  )}
 
               {/* Raw JSON Collapsible */}
               {rawJson && (
