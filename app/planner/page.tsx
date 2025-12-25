@@ -283,13 +283,28 @@ export default function PlannerPage() {
   }, [geometry, workZoneSnapshot, fieldLayout, jobDetails, roadCenterlines]);
 
   // Regenerate layout with street-aware data when road centerlines become available
+  // BUT only if user hasn't made manual edits (isLayoutDirty) and layout isn't locked
   useEffect(() => {
     if (!geometry || !workZoneSnapshot || !roadCenterlines || roadCenterlines.length === 0) return;
+    
+    // CRITICAL: Don't overwrite user edits or locked layouts
+    if (isLayoutDirty || isLayoutLocked) {
+      console.log("[Layout] Road centerlines available but skipping regeneration (user edits or locked)");
+      return;
+    }
+    
+    // Only regenerate if current layout is AI-suggested (not user-modified)
+    if (fieldLayout && fieldLayout.source === "user_modified") {
+      console.log("[Layout] Road centerlines available but skipping regeneration (user-modified layout)");
+      return;
+    }
     
     // Get polygon ring for layout suggestion
     const ring = getPolygonRing(geometry);
     if (!ring || ring.length < 3) return;
 
+    console.log("[Layout] Regenerating with street-aware placement");
+    
     // Generate street-aware layout
     const layoutInput = {
       polygonRing: ring,
@@ -305,7 +320,7 @@ export default function PlannerPage() {
     setFieldLayout(suggestedLayout);
     setIsLayoutLocked(false);
     setIsLayoutDirty(false);
-  }, [roadCenterlines]); // Only re-run when road centerlines change
+  }, [roadCenterlines, isLayoutDirty, isLayoutLocked, fieldLayout?.source]); // Include guards in deps
 
   // Handle road features extracted from map
   const handleRoadFeaturesExtracted = useCallback((roads: RoadPolyline[]) => {
@@ -316,6 +331,11 @@ export default function PlannerPage() {
 
   // Handle field layout changes from user edits
   const handleFieldLayoutChange = useCallback((layout: FieldLayout) => {
+    // Debug: Log the layout change
+    const coneCount = layout.devices.filter(d => d.type === "cone").length;
+    const signCount = layout.devices.filter(d => d.type === "sign").length;
+    console.log(`[Parent] handleFieldLayoutChange: cones=${coneCount}, signs=${signCount}, total=${layout.devices.length}, source=${layout.source}`);
+    
     setFieldLayout(layout);
     setIsLayoutDirty(true);
     // Auto-unlock on edit

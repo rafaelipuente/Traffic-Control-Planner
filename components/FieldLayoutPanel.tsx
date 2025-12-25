@@ -189,16 +189,18 @@ export default function FieldLayoutPanel({
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
   
-  // Refs to track current state values for use in event handlers
+  // Refs to track current state/callback values for use in event handlers
   // This fixes the stale closure issue where map.on("click") captures old values
   const activeToolRef = useRef<EditTool>(activeTool);
   const isEditModeRef = useRef<boolean>(isEditMode);
   const layoutRef = useRef<FieldLayout | null>(layout);
+  const onLayoutChangeRef = useRef<(layout: FieldLayout) => void>(onLayoutChange);
   
-  // Keep refs in sync with state
+  // Keep refs in sync with state/props
   useEffect(() => { activeToolRef.current = activeTool; }, [activeTool]);
   useEffect(() => { isEditModeRef.current = isEditMode; }, [isEditMode]);
   useEffect(() => { layoutRef.current = layout; }, [layout]);
+  useEffect(() => { onLayoutChangeRef.current = onLayoutChange; }, [onLayoutChange]);
 
   // Compute bbox for viewport fitting
   const bbox = useMemo(() => {
@@ -363,7 +365,9 @@ export default function FieldLayoutPanel({
             validateLayoutState(newLayout, `after add_${deviceType}`);
           }
           
-          onLayoutChange(newLayout);
+          // CRITICAL: Use ref to get latest callback (fixes stale closure)
+          const currentOnLayoutChange = onLayoutChangeRef.current;
+          currentOnLayoutChange(newLayout);
           
           // Log the final counts for verification
           const coneCount = newLayout.devices.filter(d => d.type === "cone").length;
@@ -552,7 +556,8 @@ export default function FieldLayoutPanel({
           const signCount = newLayout.devices.filter(d => d.type === "sign").length;
           console.log(`[EditMode Delete] Layout updated: cones=${coneCount}, signs=${signCount}, total=${newLayout.devices.length}`);
           
-          onLayoutChange(newLayout);
+          // CRITICAL: Use ref to get latest callback (fixes stale closure)
+          onLayoutChangeRef.current(newLayout);
           setSelectedDeviceId(null);
           
           if (DEBUG_EDIT_MODE) {
@@ -588,8 +593,9 @@ export default function FieldLayoutPanel({
         const newPos = marker.getLngLat();
         const currentLayout = layoutRef.current;
         
+        console.log(`[EditMode Drag] Device ${device.id} moved to [${newPos.lng.toFixed(6)}, ${newPos.lat.toFixed(6)}]`);
+        
         if (DEBUG_EDIT_MODE) {
-          console.log(`[EditMode] Drag end: ${device.id} → [${newPos.lng.toFixed(6)}, ${newPos.lat.toFixed(6)}]`);
           setDebugState(prev => ({ ...prev, draggingDeviceId: null, lastAction: "drag" }));
         }
         
@@ -598,7 +604,8 @@ export default function FieldLayoutPanel({
           const deviceIndex = newLayout.devices.findIndex(d => d.id === device.id);
           if (deviceIndex >= 0) {
             newLayout.devices[deviceIndex].lngLat = [newPos.lng, newPos.lat];
-            onLayoutChange(newLayout);
+            // CRITICAL: Use ref to get latest callback (fixes stale closure)
+            onLayoutChangeRef.current(newLayout);
           }
         }
         
@@ -609,6 +616,19 @@ export default function FieldLayoutPanel({
 
       markersRef.current.set(device.id, marker);
     });
+    
+    // DEV INVARIANT: Verify DOM marker count matches layout
+    const domMarkerCount = markersRef.current.size;
+    const layoutDeviceCount = layout.devices.length;
+    const coneCount = layout.devices.filter(d => d.type === "cone").length;
+    const signCount = layout.devices.filter(d => d.type === "sign").length;
+    
+    console.log(`[INV] layout: total=${layoutDeviceCount} cones=${coneCount} signs=${signCount}`);
+    console.log(`[INV] domMarkers=${domMarkerCount} ${domMarkerCount === layoutDeviceCount ? "✅" : "❌ MISMATCH"}`);
+    
+    if (domMarkerCount !== layoutDeviceCount) {
+      console.error(`[INVARIANT VIOLATION] DOM markers (${domMarkerCount}) != layout devices (${layoutDeviceCount})`);
+    }
   }, [layout, isEditMode, activeTool, selectedDeviceId, onLayoutChange]);
 
   // Toggle edit mode
