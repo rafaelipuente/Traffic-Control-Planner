@@ -308,6 +308,21 @@ export default function OutputPanel({
     return 0; // empty
   }, [isLoading, error, isGenerated, response, isPreview, isPlanDirty]);
 
+  // DEV-MODE ASSERTION: Detect invalid state combinations that could cause crashes
+  if (process.env.NODE_ENV === "development") {
+    // State 4 or 5 should NEVER be reached without a valid response
+    if ((panelStateIndex === 4 || panelStateIndex === 5) && !response) {
+      console.error(
+        "[OutputPanel] INVARIANT VIOLATION: State %d requires non-null response. " +
+        "isGenerated=%s, isPlanDirty=%s, response=%s",
+        panelStateIndex,
+        isGenerated,
+        isPlanDirty,
+        response
+      );
+    }
+  }
+
   return (
     <div className="flex flex-col h-full bg-white relative">
       {/* 1) Persistent Header */}
@@ -708,19 +723,19 @@ export default function OutputPanel({
                 {/* Exportable content container */}
                 <div ref={exportRef} data-testid="tcp-output-panel" className="flex flex-col gap-6">
                   
-                  {/* Summary Card */}
+                  {/* Summary Card - Defensive: use optional chaining for safety during transitions */}
                   <InView variants="fadeUp" delay={0}>
                     <div className="bg-white border border-slate-200 rounded-sm p-4 shadow-sm relative">
                       <div className="absolute top-0 left-0 w-1 h-full bg-slate-200"></div>
                       <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 pl-2">
                         Executive Summary
                       </h3>
-                      <p className="text-sm text-slate-700 leading-relaxed pl-2">{response.summary}</p>
+                      <p className="text-sm text-slate-700 leading-relaxed pl-2">{response?.summary ?? "Loading..."}</p>
                     </div>
                   </InView>
 
-                  {/* Plan Confidence Card */}
-                  {response.coverage && (
+                  {/* Plan Confidence Card - Defensive: optional chaining */}
+                  {response?.coverage && (
                     <InView variants="fadeUp" delay={0.06}>
                       <div className="bg-emerald-50/30 border border-emerald-100 rounded-sm p-4">
                         <div className="flex items-center gap-2 mb-3">
@@ -801,10 +816,10 @@ export default function OutputPanel({
                       </div>
 
                       <div className="p-4 space-y-6">
-                        {/* Layout */}
+                        {/* Layout - Defensive: optional chaining */}
                         <div>
                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Layout Strategy</span>
-                          <p className="text-sm font-medium text-slate-800">{response.plan.recommendedLayout}</p>
+                          <p className="text-sm font-medium text-slate-800">{response?.plan?.recommendedLayout ?? "—"}</p>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -820,7 +835,7 @@ export default function OutputPanel({
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
-                                  {response.plan.signSpacing.map((sign) => (
+                                  {(response?.plan?.signSpacing ?? []).map((sign) => (
                                     <tr key={sign.label} className="bg-white hover:bg-slate-50 transition-colors">
                                       <td className="py-2 px-3 font-bold text-amber-600 font-mono">{sign.label}</td>
                                       <td className="py-2 px-3 text-right text-slate-700 font-mono">
@@ -833,14 +848,14 @@ export default function OutputPanel({
                             </div>
                           </div>
 
-                          {/* Taper & Buffer */}
+                          {/* Taper & Buffer - Defensive: optional chaining */}
                           <div className="space-y-3">
                             <div>
                               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Taper Length</span>
                               <div className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-sm">
                                 <span className="text-xs text-slate-500">Calculated</span>
                                 <AnimatedValue 
-                                  value={response.plan.taperLengthFt} 
+                                  value={response?.plan?.taperLengthFt ?? 0} 
                                   suffix=" ft" 
                                   className="text-sm font-bold text-slate-900 font-mono" 
                                 />
@@ -851,7 +866,7 @@ export default function OutputPanel({
                               <div className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-sm">
                                 <span className="text-xs text-slate-500">Longitudinal</span>
                                 <AnimatedValue 
-                                  value={response.plan.bufferLengthFt} 
+                                  value={response?.plan?.bufferLengthFt ?? 0} 
                                   suffix=" ft" 
                                   className="text-sm font-bold text-slate-900 font-mono" 
                                 />
@@ -860,34 +875,34 @@ export default function OutputPanel({
                           </div>
                         </div>
 
-                        {/* Devices */}
+                        {/* Devices - Defensive: optional chaining */}
                         <div>
                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Required Devices</span>
                           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                             <div className="p-2 border border-slate-200 rounded-sm bg-slate-50">
                               <span className="text-[10px] text-slate-500 uppercase block mb-1">Cones</span>
                               <AnimatedValue 
-                                value={response.plan.devices.cones} 
+                                value={response?.plan?.devices?.cones ?? 0} 
                                 className="text-lg font-bold text-slate-900 font-mono" 
                               />
                             </div>
                             <div className="p-2 border border-slate-200 rounded-sm bg-slate-50">
                               <span className="text-[10px] text-slate-500 uppercase block mb-1">Signs</span>
                               <AnimatedValue 
-                                value={response.plan.devices.signs} 
+                                value={response?.plan?.devices?.signs ?? 0} 
                                 className="text-lg font-bold text-slate-900 font-mono" 
                               />
                             </div>
                             <div className="p-2 border border-slate-200 rounded-sm bg-slate-50">
                               <span className="text-[10px] text-slate-500 uppercase block mb-1">Arrow Board</span>
                               <span className="text-lg font-bold text-slate-900 font-mono">
-                                {response.plan.devices.arrowBoard ? "YES" : "NO"}
+                                {response?.plan?.devices?.arrowBoard ? "YES" : "NO"}
                               </span>
                             </div>
                             <div className="p-2 border border-slate-200 rounded-sm bg-slate-50">
                               <span className="text-[10px] text-slate-500 uppercase block mb-1">Flaggers</span>
                               <AnimatedValue 
-                                value={response.plan.devices.flaggers} 
+                                value={response?.plan?.devices?.flaggers ?? 0} 
                                 className="text-lg font-bold text-slate-900 font-mono" 
                               />
                             </div>
@@ -897,15 +912,15 @@ export default function OutputPanel({
                     </div>
                   </InView>
 
-                  {/* Assumptions */}
-                  {response.assumptions.length > 0 && (
+                  {/* Assumptions - Defensive: optional chaining */}
+                  {(response?.assumptions?.length ?? 0) > 0 && (
                     <InView variants="fadeUp" delay={0.24}>
                       <div className="bg-white border border-slate-200 rounded-sm p-4 shadow-sm">
                         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">
                           Notes & Assumptions
                         </h3>
                         <ul className="list-disc list-inside text-xs text-slate-600 space-y-1 marker:text-slate-300">
-                          {response.assumptions.map((a, i) => (
+                          {(response?.assumptions ?? []).map((a, i) => (
                             <li key={i}>{a}</li>
                           ))}
                         </ul>
@@ -913,15 +928,15 @@ export default function OutputPanel({
                     </InView>
                   )}
 
-                  {/* References */}
-                  {response.references.length > 0 && (
+                  {/* References - Defensive: optional chaining */}
+                  {(response?.references?.length ?? 0) > 0 && (
                     <InView variants="fadeUp" delay={0.3}>
                       <div className="bg-white border border-slate-200 rounded-sm p-4 shadow-sm">
                         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">
                           Reference Docs
                         </h3>
                         <div className="flex flex-wrap gap-2">
-                          {response.references.map((ref, i) => (
+                          {(response?.references ?? []).map((ref, i) => (
                             <span
                               key={i}
                               className="inline-block bg-slate-100 text-slate-600 text-[10px] font-medium px-2 py-1 rounded-sm border border-slate-200 font-mono"
@@ -995,9 +1010,10 @@ export default function OutputPanel({
 
           {/* =====================================
               STATE 5: DIRTY/INVALIDATED (Plan exists but inputs changed)
+              Defensive: Guard all response access to prevent null reference errors
               ===================================== */}
           <div className="flex flex-col gap-6">
-            {/* Invalidation Warning Banner */}
+            {/* Invalidation Warning Banner - Always safe to render */}
             <div className="bg-amber-50 border-2 border-amber-400 rounded-sm p-4" role="alert" aria-live="polite">
               <div className="flex items-start gap-3">
                 <div className="flex-shrink-0">
@@ -1025,21 +1041,28 @@ export default function OutputPanel({
               </div>
             </div>
 
-            {/* Diagram Preview - Still show but marked as outdated */}
-            <div className="bg-white border border-amber-300 rounded-sm shadow-lg p-1 relative overflow-hidden opacity-60">
-              <div className="absolute top-0 left-0 w-full h-1 bg-amber-400"></div>
-              <div className="absolute inset-0 bg-amber-50/20 pointer-events-none z-10"></div>
-              <DiagramPreview
-                geometry={geometry}
-                job={diagramJob}
-                plan={diagramPlan}
-                height={350}
-              />
-              {/* Overlay Warning */}
-              <div className="absolute top-4 right-4 bg-amber-100 text-xs font-bold text-amber-800 px-3 py-1.5 rounded-sm border border-amber-300 shadow-sm z-20">
-                OUTDATED
+            {/* Diagram Preview - Only render if response exists (defensive guard) */}
+            {response ? (
+              <div className="bg-white border border-amber-300 rounded-sm shadow-lg p-1 relative overflow-hidden opacity-60">
+                <div className="absolute top-0 left-0 w-full h-1 bg-amber-400"></div>
+                <div className="absolute inset-0 bg-amber-50/20 pointer-events-none z-10"></div>
+                <DiagramPreview
+                  geometry={geometry}
+                  job={diagramJob}
+                  plan={diagramPlan}
+                  height={350}
+                />
+                {/* Overlay Warning */}
+                <div className="absolute top-4 right-4 bg-amber-100 text-xs font-bold text-amber-800 px-3 py-1.5 rounded-sm border border-amber-300 shadow-sm z-20">
+                  OUTDATED
+                </div>
               </div>
-            </div>
+            ) : (
+              /* Fallback placeholder if response is null during transition */
+              <div className="bg-slate-100 border border-slate-300 rounded-sm p-8 text-center">
+                <p className="text-sm text-slate-500">Loading previous plan data...</p>
+              </div>
+            )}
 
             {/* Regenerate CTA */}
             <div className="flex flex-col gap-3">
