@@ -373,7 +373,7 @@ export default function OutputPanel({
                   No Work Zone Selected
                 </h3>
                 <p className="text-xs text-slate-500 max-w-xs leading-relaxed">
-                  Draw a polygon on the map to activate the schematic preview.
+                  Define the work zone on the map to activate the schematic preview.
                 </p>
                 <div className="mt-4 text-[10px] font-mono text-slate-400 bg-slate-50 px-2 py-1 rounded-sm border border-slate-100">
                   Step 1 of 3: Define Work Zone

@@ -280,7 +280,7 @@ export default function PlannerPage() {
   const selectionSummary = geometry
     ? geometry.type === "bbox"
       ? `Bbox: [${geometry.bbox.map((n) => n.toFixed(5)).join(", ")}]`
-      : `Polygon: ${geometry.polygon[0]?.length ?? 0} vertices`
+      : `Work Zone: ${geometry.polygon[0]?.length ?? 0} points`
     : null;
 
   return (
@@ -400,7 +400,7 @@ export default function PlannerPage() {
               <div className="text-xs text-center space-y-2">
                 {!geometry && (
                   <div className="flex items-center justify-center gap-2 text-amber-700 bg-amber-50 px-3 py-2 rounded-sm border border-amber-100">
-                    <span className="font-bold">⚠ ACTION REQUIRED:</span> Define work zone polygon
+                    <span className="font-bold">⚠ ACTION REQUIRED:</span> Define work zone on map
                   </div>
                 )}
                 {geometry && !jobValid && (

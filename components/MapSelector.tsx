@@ -212,7 +212,7 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
               : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
           }`}
         >
-          Draw Polygon
+          Define Work Zone
         </button>
         <button
           type="button"
@@ -226,7 +226,7 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
       {/* Instructions */}
       {isDrawing && (
         <p className="text-sm text-orange-600 bg-orange-50 px-3 py-2 rounded-md">
-          Click on the map to add polygon points. Double-click to finish.
+          Click on the map to define work zone boundaries. Double-click to finish.
         </p>
       )}
 
