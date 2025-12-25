@@ -13,7 +13,6 @@ import { DiagramGeometry } from "@/lib/diagram/types";
 import {
   computeWorkZoneMetadata,
   getPolygonRing,
-  buildAutoFitStaticMapUrl,
 } from "@/lib/workZoneSnapshot";
 import { WorkZoneSnapshotData } from "@/components/OutputPanel";
 
@@ -224,7 +223,7 @@ export default function PlannerPage() {
     return currentSignature !== lastGeneratedSignature;
   }, [response, lastGeneratedSignature, currentSignature]);
 
-  // Compute work zone snapshot data for instant visual feedback
+  // Compute work zone snapshot data for embedded mini-map
   const workZoneSnapshot: WorkZoneSnapshotData | null = useMemo(() => {
     if (!geometry || !mapToken) return null;
 
@@ -234,13 +233,9 @@ export default function PlannerPage() {
     const ring = getPolygonRing(geometry);
     if (!ring || ring.length < 3) return null;
 
-    const imageUrl = buildAutoFitStaticMapUrl(mapToken, ring, {
-      width: 400,
-      height: 200,
-    });
-
     return {
-      imageUrl,
+      mapToken,
+      polygonRing: ring,
       vertexCount: metadata.vertexCount,
       centroid: metadata.centroid,
       locationLabel: locationLabel || undefined,

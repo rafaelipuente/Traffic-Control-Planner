@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useMemo } from "react";
+import dynamic from "next/dynamic";
 import { TcpDraftResponse, CoverageInfo } from "@/lib/tcpTypes";
 import DiagramPreview from "./DiagramPreview";
 import { TransitionPanel } from "./TransitionPanel";
@@ -11,6 +12,16 @@ import {
   DiagramJobData,
   DiagramPlanData,
 } from "@/lib/diagram/types";
+
+// Dynamic import for WorkZoneSnapshotMap to avoid SSR issues with Mapbox
+const WorkZoneSnapshotMap = dynamic(() => import("./WorkZoneSnapshotMap"), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-[220px] bg-slate-100 animate-pulse rounded-sm flex items-center justify-center">
+      <span className="text-xs text-slate-400">Loading map…</span>
+    </div>
+  ),
+});
 
 // Industrial transition variants - subtle fade + slight translateY
 const panelVariants = {
@@ -42,8 +53,10 @@ export interface CoverageGateErrorDetails {
 
 /** Work zone snapshot metadata */
 export interface WorkZoneSnapshotData {
-  /** Static map image URL from Mapbox */
-  imageUrl: string;
+  /** Mapbox access token for embedded map */
+  mapToken: string;
+  /** Polygon ring as array of [lng, lat] coordinates */
+  polygonRing: number[][];
   /** Vertex count of the polygon */
   vertexCount: number;
   /** Center point of the work zone */
@@ -481,7 +494,7 @@ export default function OutputPanel({
               STATE 1: PREVIEW (Geometry exists, no AI plan yet)
               ===================================== */}
           <div className="flex flex-col gap-6">
-            {/* Work Zone Snapshot Card - Instant visual feedback */}
+            {/* Work Zone Snapshot Card - Real embedded map with street context */}
             {workZoneSnapshot && (
               <InView variants="fadeUp" delay={0}>
                 <div className="bg-white border border-slate-200 rounded-sm shadow-sm overflow-hidden">
@@ -495,35 +508,15 @@ export default function OutputPanel({
                     <span className="text-[10px] font-mono text-slate-400">MAP-PREVIEW</span>
                   </div>
                   
-                  {/* Static Map Image */}
-                  <div className="relative">
-                    <img
-                      src={workZoneSnapshot.imageUrl}
-                      alt={`Work zone map preview${workZoneSnapshot.locationLabel ? ` near ${workZoneSnapshot.locationLabel}` : ""}`}
-                      className="w-full h-auto object-cover"
-                      loading="eager"
-                    />
-                    {/* Location overlay */}
-                    {workZoneSnapshot.locationLabel && (
-                      <div className="absolute bottom-2 left-2 right-2 bg-white/90 backdrop-blur-sm rounded-sm px-2 py-1 text-xs text-slate-700 truncate border border-slate-200 shadow-sm">
-                        📍 {workZoneSnapshot.locationLabel}
-                      </div>
-                    )}
-                  </div>
-                  
-                  {/* Metadata Row */}
-                  <div className="px-3 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-[10px]">
-                    <div className="flex items-center gap-3">
-                      <span className="text-slate-500">
-                        <span className="font-bold text-slate-700">{workZoneSnapshot.vertexCount}</span> vertices
-                      </span>
-                      <span className="text-slate-300">|</span>
-                      <span className="text-slate-500 font-mono">
-                        {workZoneSnapshot.centroid.lat.toFixed(5)}, {workZoneSnapshot.centroid.lng.toFixed(5)}
-                      </span>
-                    </div>
-                    <span className="text-emerald-600 font-bold uppercase">✓ Captured</span>
-                  </div>
+                  {/* Embedded Mapbox Mini-Map */}
+                  <WorkZoneSnapshotMap
+                    mapToken={workZoneSnapshot.mapToken}
+                    polygonRing={workZoneSnapshot.polygonRing}
+                    height={220}
+                    locationLabel={workZoneSnapshot.locationLabel}
+                    centroid={workZoneSnapshot.centroid}
+                    vertexCount={workZoneSnapshot.vertexCount}
+                  />
                 </div>
               </InView>
             )}
