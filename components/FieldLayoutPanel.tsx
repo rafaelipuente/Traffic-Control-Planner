@@ -1,5 +1,17 @@
 "use client";
 
+/**
+ * FieldLayoutPanel - Map Mockup with editable device overlay
+ * 
+ * EDIT MODE REGRESSION CHECKLIST:
+ * - [ ] Add Cone: Click map with 🔶 tool → creates cone, increments cone count
+ * - [ ] Add Sign: Click map with ⚠️ tool → creates sign, increments sign count  
+ * - [ ] Delete: Click device with 🗑️ tool → removes device, updates counts
+ * - [ ] Drag: With ✋ tool, drag device → device moves, map does NOT pan
+ * - [ ] Pan: With add/delete tools, drag map → map pans normally
+ * - [ ] Exit: Exit edit mode → map returns to non-interactive state
+ */
+
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
@@ -15,6 +27,9 @@ import {
 import { normalizeRoadFeatures } from "@/lib/layout/suggestFieldLayout";
 import DiagramPreview from "./DiagramPreview";
 import { DiagramGeometry, DiagramJobData, DiagramPlanData } from "@/lib/diagram/types";
+
+// DEV-ONLY: Set to true to show edit debug overlay
+const DEBUG_EDIT_MODE = false;
 
 // Road layers to query for centerlines
 const ROAD_LAYERS = [
@@ -73,6 +88,15 @@ export interface FieldLayoutPanelProps {
 type ActiveTab = "mockup" | "schematic";
 type EditTool = "select" | "addCone" | "addSign" | "delete";
 
+// Debug state for edit mode (dev-only)
+interface EditDebugState {
+  activeTool: EditTool;
+  lastAction: string;
+  lastAddedType: DeviceType | null;
+  draggingDeviceId: string | null;
+  mapDragPanEnabled: boolean;
+}
+
 /**
  * Compute bounding box from a polygon ring
  */
@@ -124,10 +148,31 @@ export default function FieldLayoutPanel({
   const [isEditMode, setIsEditMode] = useState(false);
   const [activeTool, setActiveTool] = useState<EditTool>("select");
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
+  const [draggingDeviceId, setDraggingDeviceId] = useState<string | null>(null);
+  
+  // Debug state (dev-only)
+  const [debugState, setDebugState] = useState<EditDebugState>({
+    activeTool: "select",
+    lastAction: "none",
+    lastAddedType: null,
+    draggingDeviceId: null,
+    mapDragPanEnabled: false,
+  });
   
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
+  
+  // Refs to track current state values for use in event handlers
+  // This fixes the stale closure issue where map.on("click") captures old values
+  const activeToolRef = useRef<EditTool>(activeTool);
+  const isEditModeRef = useRef<boolean>(isEditMode);
+  const layoutRef = useRef<FieldLayout | null>(layout);
+  
+  // Keep refs in sync with state
+  useEffect(() => { activeToolRef.current = activeTool; }, [activeTool]);
+  useEffect(() => { isEditModeRef.current = isEditMode; }, [isEditMode]);
+  useEffect(() => { layoutRef.current = layout; }, [layout]);
 
   // Compute bbox for viewport fitting
   const bbox = useMemo(() => {
@@ -249,11 +294,23 @@ export default function FieldLayoutPanel({
     });
 
     // Handle map click for adding devices
+    // IMPORTANT: Use refs to access current state values (fixes stale closure issue)
     map.on("click", (e) => {
-      if (!isEditMode) return;
+      const currentTool = activeToolRef.current;
+      const currentEditMode = isEditModeRef.current;
+      const currentLayout = layoutRef.current;
       
-      if (activeTool === "addCone" || activeTool === "addSign") {
-        const deviceType: DeviceType = activeTool === "addCone" ? "cone" : "sign";
+      if (!currentEditMode) return;
+      
+      if (currentTool === "addCone" || currentTool === "addSign") {
+        // CRITICAL: Map tool name to correct device type
+        const deviceType: DeviceType = currentTool === "addCone" ? "cone" : "sign";
+        
+        // Debug logging (dev-only)
+        if (DEBUG_EDIT_MODE) {
+          console.log(`[EditMode] Add device: tool=${currentTool}, type=${deviceType}`);
+        }
+        
         const newDevice: FieldDevice = {
           id: generateDeviceId(),
           type: deviceType,
@@ -261,10 +318,19 @@ export default function FieldLayoutPanel({
           label: deviceType === "sign" ? getNextSignLabel() : undefined,
         };
         
-        if (layout) {
-          const newLayout = cloneLayout(layout, "user_modified");
+        if (currentLayout) {
+          const newLayout = cloneLayout(currentLayout, "user_modified");
           newLayout.devices.push(newDevice);
           onLayoutChange(newLayout);
+          
+          // Update debug state
+          if (DEBUG_EDIT_MODE) {
+            setDebugState(prev => ({
+              ...prev,
+              lastAction: `add_${deviceType}`,
+              lastAddedType: deviceType,
+            }));
+          }
         }
         
         // Reset to select tool after adding
@@ -290,21 +356,42 @@ export default function FieldLayoutPanel({
     return labels.find(l => !usedLabels.has(l)) || `S${existingSigns.length + 1}`;
   }, [layout]);
 
-  // Update map interactivity when edit mode changes
+  // Update map interactivity when edit mode or tool changes
+  // CRITICAL: Disable dragPan in "select" tool so markers can be dragged
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     
     if (isEditMode) {
-      map.dragPan.enable();
+      // In select tool, disable map panning so marker drag works
+      // In other tools (add/delete), enable panning for navigation
+      const shouldEnableDragPan = activeTool !== "select";
+      
+      if (shouldEnableDragPan) {
+        map.dragPan.enable();
+      } else {
+        map.dragPan.disable();
+      }
+      
       map.scrollZoom.enable();
       map.doubleClickZoom.enable();
+      
+      // Debug logging
+      if (DEBUG_EDIT_MODE) {
+        console.log(`[EditMode] Tool: ${activeTool}, dragPan: ${shouldEnableDragPan}`);
+        setDebugState(prev => ({
+          ...prev,
+          activeTool,
+          mapDragPanEnabled: shouldEnableDragPan,
+        }));
+      }
     } else {
+      // Outside edit mode, disable all interactions
       map.dragPan.disable();
       map.scrollZoom.disable();
       map.doubleClickZoom.disable();
     }
-  }, [isEditMode]);
+  }, [isEditMode, activeTool]);
 
   // Render device markers
   useEffect(() => {
@@ -314,6 +401,10 @@ export default function FieldLayoutPanel({
     // Remove old markers
     markersRef.current.forEach(marker => marker.remove());
     markersRef.current.clear();
+
+    // Determine if dragging should be enabled
+    // CRITICAL: Only enable drag in select tool mode
+    const canDrag = isEditMode && activeTool === "select";
 
     // Add new markers
     layout.devices.forEach(device => {
@@ -328,12 +419,14 @@ export default function FieldLayoutPanel({
         align-items: center;
         justify-content: center;
         font-size: 16px;
-        cursor: ${isEditMode ? "grab" : "default"};
+        cursor: ${canDrag ? "grab" : (isEditMode ? "pointer" : "default")};
         border-radius: 50%;
         background: ${selectedDeviceId === device.id ? "#FFB300" : "white"};
         border: 2px solid ${selectedDeviceId === device.id ? "#D97706" : iconConfig.color};
         box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         transition: all 0.15s ease;
+        pointer-events: auto;
+        z-index: 10;
       `;
       el.innerHTML = iconConfig.emoji;
       
@@ -356,39 +449,77 @@ export default function FieldLayoutPanel({
         el.appendChild(labelEl);
       }
       
-      // Click to select
+      // Click to select or delete
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (isEditMode) {
-          if (activeTool === "delete") {
-            // Delete this device
-            const newLayout = cloneLayout(layout, "user_modified");
-            newLayout.devices = newLayout.devices.filter(d => d.id !== device.id);
-            onLayoutChange(newLayout);
-            setSelectedDeviceId(null);
-          } else {
-            setSelectedDeviceId(device.id === selectedDeviceId ? null : device.id);
+        
+        // Use refs for current state values
+        const currentEditMode = isEditModeRef.current;
+        const currentTool = activeToolRef.current;
+        const currentLayout = layoutRef.current;
+        
+        if (!currentEditMode || !currentLayout) return;
+        
+        if (currentTool === "delete") {
+          // Delete this device
+          if (DEBUG_EDIT_MODE) {
+            console.log(`[EditMode] Delete device: ${device.id} (${device.type})`);
           }
+          const newLayout = cloneLayout(currentLayout, "user_modified");
+          newLayout.devices = newLayout.devices.filter(d => d.id !== device.id);
+          onLayoutChange(newLayout);
+          setSelectedDeviceId(null);
+          
+          if (DEBUG_EDIT_MODE) {
+            setDebugState(prev => ({ ...prev, lastAction: `delete_${device.type}` }));
+          }
+        } else {
+          // Toggle selection
+          setSelectedDeviceId(device.id === selectedDeviceId ? null : device.id);
         }
       });
 
       const marker = new mapboxgl.Marker({
         element: el,
         anchor: "center",
-        draggable: isEditMode && activeTool === "select",
+        draggable: canDrag,
       })
         .setLngLat(device.lngLat)
         .addTo(map);
 
+      // Handle drag start
+      marker.on("dragstart", () => {
+        setDraggingDeviceId(device.id);
+        if (DEBUG_EDIT_MODE) {
+          console.log(`[EditMode] Drag start: ${device.id}`);
+          setDebugState(prev => ({ ...prev, draggingDeviceId: device.id }));
+        }
+        // Update cursor while dragging
+        el.style.cursor = "grabbing";
+      });
+
       // Handle drag end
       marker.on("dragend", () => {
         const newPos = marker.getLngLat();
-        const newLayout = cloneLayout(layout, "user_modified");
-        const deviceIndex = newLayout.devices.findIndex(d => d.id === device.id);
-        if (deviceIndex >= 0) {
-          newLayout.devices[deviceIndex].lngLat = [newPos.lng, newPos.lat];
-          onLayoutChange(newLayout);
+        const currentLayout = layoutRef.current;
+        
+        if (DEBUG_EDIT_MODE) {
+          console.log(`[EditMode] Drag end: ${device.id} → [${newPos.lng.toFixed(6)}, ${newPos.lat.toFixed(6)}]`);
+          setDebugState(prev => ({ ...prev, draggingDeviceId: null, lastAction: "drag" }));
         }
+        
+        if (currentLayout) {
+          const newLayout = cloneLayout(currentLayout, "user_modified");
+          const deviceIndex = newLayout.devices.findIndex(d => d.id === device.id);
+          if (deviceIndex >= 0) {
+            newLayout.devices[deviceIndex].lngLat = [newPos.lng, newPos.lat];
+            onLayoutChange(newLayout);
+          }
+        }
+        
+        setDraggingDeviceId(null);
+        // Reset cursor
+        el.style.cursor = canDrag ? "grab" : "pointer";
       });
 
       markersRef.current.set(device.id, marker);
@@ -589,9 +720,23 @@ export default function FieldLayoutPanel({
           <div
             ref={containerRef}
             style={{ height }}
-            className="w-full"
+            className="w-full relative"
             aria-label={`Work zone mockup${locationLabel ? ` near ${locationLabel}` : ""}`}
           />
+          
+          {/* DEV-ONLY: Edit Debug Overlay */}
+          {DEBUG_EDIT_MODE && isEditMode && (
+            <div className="absolute top-2 left-2 bg-black/80 text-green-400 text-[9px] font-mono p-2 rounded z-50 pointer-events-none">
+              <div>tool: <span className="text-yellow-400">{activeTool}</span></div>
+              <div>lastAction: <span className="text-cyan-400">{debugState.lastAction}</span></div>
+              <div>lastAdded: <span className="text-orange-400">{debugState.lastAddedType || "—"}</span></div>
+              <div>dragging: <span className="text-pink-400">{draggingDeviceId || "—"}</span></div>
+              <div>dragPan: <span className={activeTool !== "select" ? "text-green-400" : "text-red-400"}>
+                {activeTool !== "select" ? "enabled" : "disabled"}
+              </span></div>
+              <div>selected: <span className="text-purple-400">{selectedDeviceId || "—"}</span></div>
+            </div>
+          )}
 
           {/* Device Counts / Validation */}
           <div className="px-3 py-2 bg-slate-900 flex items-center justify-between text-[10px]">
