@@ -1,9 +1,9 @@
 /**
- * AI Layout Suggestion Generator
+ * Street-Aware Layout Suggestion Engine
  * 
  * Generates a credible visual mockup of TCP device placement based on
- * the work zone polygon and job parameters. This is NOT compliance math —
- * it's a starting point for the user to visualize and edit.
+ * polygon geometry analysis. Uses a "work zone axis" derived from the
+ * polygon shape to place devices realistically along a virtual centerline.
  */
 
 import {
@@ -15,202 +15,352 @@ import {
   SIGN_LABELS,
 } from "../layoutTypes";
 
-/**
- * Spacing buckets based on posted speed (simplified for MVP)
- * These are rough approximations for visual mockup purposes only
- */
-const SPEED_SPACING: Record<number, { signSpacing: number; coneSpacing: number }> = {
-  25: { signSpacing: 100, coneSpacing: 20 },
-  30: { signSpacing: 100, coneSpacing: 20 },
-  35: { signSpacing: 150, coneSpacing: 25 },
-  40: { signSpacing: 200, coneSpacing: 30 },
-  45: { signSpacing: 250, coneSpacing: 35 },
-  50: { signSpacing: 300, coneSpacing: 40 },
-  55: { signSpacing: 350, coneSpacing: 45 },
-  60: { signSpacing: 400, coneSpacing: 50 },
-  65: { signSpacing: 500, coneSpacing: 55 },
+// ============================================
+// CONSTANTS
+// ============================================
+
+/** Feet to meters conversion */
+const FT_TO_M = 0.3048;
+
+/** Meters to approximate degrees (rough, ~45° latitude) */
+const M_TO_DEG = 1 / 111320;
+
+/** Speed-based spacing in feet */
+const SPEED_CONFIG: Record<number, { signSpacingFt: number[]; taperLengthFt: number; coneSpacingFt: number }> = {
+  25: { signSpacingFt: [100, 200, 300], taperLengthFt: 100, coneSpacingFt: 15 },
+  30: { signSpacingFt: [100, 200, 300], taperLengthFt: 120, coneSpacingFt: 15 },
+  35: { signSpacingFt: [150, 300, 450], taperLengthFt: 175, coneSpacingFt: 17 },
+  40: { signSpacingFt: [200, 400, 600], taperLengthFt: 240, coneSpacingFt: 20 },
+  45: { signSpacingFt: [250, 500, 750], taperLengthFt: 300, coneSpacingFt: 22 },
+  50: { signSpacingFt: [300, 600, 900], taperLengthFt: 360, coneSpacingFt: 25 },
+  55: { signSpacingFt: [350, 700, 1050], taperLengthFt: 420, coneSpacingFt: 27 },
+  60: { signSpacingFt: [400, 800, 1200], taperLengthFt: 480, coneSpacingFt: 30 },
+  65: { signSpacingFt: [500, 1000, 1500], taperLengthFt: 550, coneSpacingFt: 32 },
 };
 
+// ============================================
+// GEOMETRY UTILITIES
+// ============================================
+
+type Point = [number, number]; // [lng, lat]
+
 /**
- * Get spacing values for a given speed, interpolating if needed
+ * Calculate distance between two points in meters (Haversine approximation)
  */
-function getSpacingForSpeed(speedMph: number): { signSpacing: number; coneSpacing: number } {
-  // Clamp to valid range
-  const clampedSpeed = Math.max(25, Math.min(65, speedMph));
+function distanceMeters(p1: Point, p2: Point): number {
+  const dLng = (p2[0] - p1[0]) * Math.PI / 180;
+  const dLat = (p2[1] - p1[1]) * Math.PI / 180;
+  const lat1 = p1[1] * Math.PI / 180;
+  const lat2 = p2[1] * Math.PI / 180;
   
-  // Round to nearest 5
-  const roundedSpeed = Math.round(clampedSpeed / 5) * 5;
-  
-  return SPEED_SPACING[roundedSpeed] || SPEED_SPACING[35];
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return 6371000 * c; // Earth radius in meters
 }
 
 /**
- * Compute the bounding box of a polygon ring
+ * Calculate bearing from p1 to p2 in radians
  */
-function computeBbox(ring: number[][]): { west: number; south: number; east: number; north: number } {
-  const lngs = ring.map(p => p[0]);
-  const lats = ring.map(p => p[1]);
+function bearing(p1: Point, p2: Point): number {
+  const dLng = (p2[0] - p1[0]) * Math.PI / 180;
+  const lat1 = p1[1] * Math.PI / 180;
+  const lat2 = p2[1] * Math.PI / 180;
+  
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  return Math.atan2(y, x);
+}
+
+/**
+ * Move a point by distance (meters) along a bearing (radians)
+ */
+function movePoint(p: Point, distanceM: number, bearingRad: number): Point {
+  const distDeg = distanceM * M_TO_DEG;
+  const lat1 = p[1] * Math.PI / 180;
+  const lng1 = p[0] * Math.PI / 180;
+  
+  // Simplified projection (works well for small distances)
+  const dLat = distDeg * Math.cos(bearingRad);
+  const dLng = distDeg * Math.sin(bearingRad) / Math.cos(lat1);
+  
+  return [p[0] + dLng, p[1] + dLat];
+}
+
+/**
+ * Compute polygon centroid
+ */
+function computeCentroid(ring: number[][]): Point {
+  if (ring.length === 0) return [0, 0];
+  const sumLng = ring.reduce((s, p) => s + p[0], 0);
+  const sumLat = ring.reduce((s, p) => s + p[1], 0);
+  return [sumLng / ring.length, sumLat / ring.length];
+}
+
+/**
+ * Find the longest edge of a polygon and return its bearing
+ */
+function findLongestEdgeBearing(ring: number[][]): { bearing: number; midpoint: Point } {
+  let maxDist = 0;
+  let longestEdge: { p1: Point; p2: Point } = { p1: [0, 0], p2: [0, 0] };
+  
+  for (let i = 0; i < ring.length; i++) {
+    const p1: Point = [ring[i][0], ring[i][1]];
+    const p2: Point = [ring[(i + 1) % ring.length][0], ring[(i + 1) % ring.length][1]];
+    const dist = distanceMeters(p1, p2);
+    
+    if (dist > maxDist) {
+      maxDist = dist;
+      longestEdge = { p1, p2 };
+    }
+  }
+  
+  const edgeBearing = bearing(longestEdge.p1, longestEdge.p2);
+  const midpoint: Point = [
+    (longestEdge.p1[0] + longestEdge.p2[0]) / 2,
+    (longestEdge.p1[1] + longestEdge.p2[1]) / 2,
+  ];
+  
+  return { bearing: edgeBearing, midpoint };
+}
+
+/**
+ * Check if a point is inside a polygon using ray casting
+ */
+function isPointInPolygon(point: Point, ring: number[][]): boolean {
+  const [x, y] = point;
+  let inside = false;
+  
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  
+  return inside;
+}
+
+/**
+ * Find the closest point on a polygon boundary to a given point
+ */
+function closestPointOnPolygon(point: Point, ring: number[][]): Point {
+  let minDist = Infinity;
+  let closest: Point = point;
+  
+  for (let i = 0; i < ring.length; i++) {
+    const p1: Point = [ring[i][0], ring[i][1]];
+    const p2: Point = [ring[(i + 1) % ring.length][0], ring[(i + 1) % ring.length][1]];
+    
+    // Project point onto line segment
+    const projected = projectPointOnSegment(point, p1, p2);
+    const dist = distanceMeters(point, projected);
+    
+    if (dist < minDist) {
+      minDist = dist;
+      closest = projected;
+    }
+  }
+  
+  return closest;
+}
+
+/**
+ * Project a point onto a line segment
+ */
+function projectPointOnSegment(p: Point, a: Point, b: Point): Point {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const lenSq = dx * dx + dy * dy;
+  
+  if (lenSq === 0) return a;
+  
+  let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  
+  return [a[0] + t * dx, a[1] + t * dy];
+}
+
+/**
+ * Find intersection points between a line and polygon
+ */
+function linePolygonIntersections(
+  lineStart: Point,
+  lineEnd: Point,
+  ring: number[][]
+): Point[] {
+  const intersections: Point[] = [];
+  
+  for (let i = 0; i < ring.length; i++) {
+    const p1: Point = [ring[i][0], ring[i][1]];
+    const p2: Point = [ring[(i + 1) % ring.length][0], ring[(i + 1) % ring.length][1]];
+    
+    const intersection = lineSegmentIntersection(lineStart, lineEnd, p1, p2);
+    if (intersection) {
+      intersections.push(intersection);
+    }
+  }
+  
+  return intersections;
+}
+
+/**
+ * Find intersection point between two line segments
+ */
+function lineSegmentIntersection(
+  a1: Point, a2: Point,
+  b1: Point, b2: Point
+): Point | null {
+  const d1x = a2[0] - a1[0];
+  const d1y = a2[1] - a1[1];
+  const d2x = b2[0] - b1[0];
+  const d2y = b2[1] - b1[1];
+  
+  const cross = d1x * d2y - d1y * d2x;
+  if (Math.abs(cross) < 1e-10) return null;
+  
+  const dx = b1[0] - a1[0];
+  const dy = b1[1] - a1[1];
+  
+  const t = (dx * d2y - dy * d2x) / cross;
+  const u = (dx * d1y - dy * d1x) / cross;
+  
+  // Check if intersection is within both segments
+  // For the polygon edge, must be within [0, 1]
+  // For the centerline, we allow extended range since it's a long line
+  if (u >= 0 && u <= 1 && t >= -10 && t <= 10) {
+    return [a1[0] + t * d1x, a1[1] + t * d1y];
+  }
+  
+  return null;
+}
+
+/**
+ * Clamp a point to be inside the polygon
+ */
+function clampToPolygon(point: Point, ring: number[][]): Point {
+  if (isPointInPolygon(point, ring)) {
+    return point;
+  }
+  return closestPointOnPolygon(point, ring);
+}
+
+/**
+ * Get distance from point to nearest polygon edge (meters)
+ */
+function distanceToPolygon(point: Point, ring: number[][]): number {
+  const closest = closestPointOnPolygon(point, ring);
+  return distanceMeters(point, closest);
+}
+
+// ============================================
+// WORK ZONE AXIS DERIVATION
+// ============================================
+
+interface WorkZoneAxis {
+  /** Polygon centroid */
+  centroid: Point;
+  /** Primary axis bearing (radians) */
+  axisBearing: number;
+  /** Entry point where axis enters polygon (upstream) */
+  entryPoint: Point;
+  /** Exit point where axis exits polygon (downstream) */
+  exitPoint: Point;
+  /** Upstream direction bearing (traffic comes from this direction) */
+  upstreamBearing: number;
+}
+
+/**
+ * Derive the work zone axis from polygon geometry
+ */
+function deriveWorkZoneAxis(ring: number[][], trafficDirection: "forward" | "reverse" = "forward"): WorkZoneAxis {
+  const centroid = computeCentroid(ring);
+  const { bearing: edgeBearing } = findLongestEdgeBearing(ring);
+  
+  // Create a long virtual centerline through the centroid
+  const extendDist = 500; // meters
+  const lineStart = movePoint(centroid, extendDist, edgeBearing + Math.PI);
+  const lineEnd = movePoint(centroid, extendDist, edgeBearing);
+  
+  // Find intersections with polygon
+  const intersections = linePolygonIntersections(lineStart, lineEnd, ring);
+  
+  let entryPoint: Point;
+  let exitPoint: Point;
+  
+  if (intersections.length >= 2) {
+    // Sort by distance from lineStart
+    intersections.sort((a, b) => 
+      distanceMeters(lineStart, a) - distanceMeters(lineStart, b)
+    );
+    
+    if (trafficDirection === "forward") {
+      entryPoint = intersections[0];
+      exitPoint = intersections[intersections.length - 1];
+    } else {
+      entryPoint = intersections[intersections.length - 1];
+      exitPoint = intersections[0];
+    }
+  } else {
+    // Fallback: use closest polygon points
+    entryPoint = closestPointOnPolygon(lineStart, ring);
+    exitPoint = closestPointOnPolygon(lineEnd, ring);
+  }
+  
+  // Upstream bearing points AWAY from polygon (direction traffic comes from)
+  const upstreamBearing = bearing(entryPoint, lineStart);
+  
   return {
-    west: Math.min(...lngs),
-    south: Math.min(...lats),
-    east: Math.max(...lngs),
-    north: Math.max(...lats),
+    centroid,
+    axisBearing: edgeBearing,
+    entryPoint,
+    exitPoint,
+    upstreamBearing,
   };
 }
 
+// ============================================
+// DEVICE PLACEMENT
+// ============================================
+
 /**
- * Infer the approach direction based on polygon shape and orientation
- * This is a simple heuristic based on the longer axis of the bounding box
+ * Get speed configuration, interpolating if needed
  */
-function inferApproachDirection(ring: number[][]): ApproachDirection {
-  const bbox = computeBbox(ring);
-  const width = bbox.east - bbox.west;
-  const height = bbox.north - bbox.south;
-  
-  // If polygon is taller than wide, assume N-S traffic flow
-  // Otherwise, assume E-W traffic flow
-  // Default to approaching from South (most common for lane closures)
-  if (height > width * 1.2) {
-    return "S"; // Traffic approaches from south
-  } else if (width > height * 1.2) {
-    return "W"; // Traffic approaches from west
-  }
-  return "S"; // Default
+function getSpeedConfig(speedMph: number): { signSpacingFt: number[]; taperLengthFt: number; coneSpacingFt: number } {
+  const clamped = Math.max(25, Math.min(65, speedMph));
+  const rounded = Math.round(clamped / 5) * 5;
+  return SPEED_CONFIG[rounded] || SPEED_CONFIG[35];
 }
 
 /**
- * Convert feet to approximate degrees (very rough, varies by latitude)
- * At ~45° latitude: 1 degree ≈ 364,000 feet longitude, 364,000 feet latitude
- * This is a rough approximation for visual purposes only
+ * Place signs upstream of entry point along the axis
  */
-function feetToDegrees(feet: number, isLongitude: boolean = false): number {
-  // Rough conversion: 1 foot ≈ 0.000003 degrees (at mid-latitudes)
-  const baseFactor = 0.000003;
-  // Longitude degrees are "smaller" at higher latitudes, but for mockup we'll ignore
-  return feet * baseFactor;
-}
-
-/**
- * Generate a point offset from a base point in a given direction
- */
-function offsetPoint(
-  base: [number, number],
-  distanceFt: number,
-  direction: ApproachDirection
-): [number, number] {
-  const [lng, lat] = base;
-  const dist = feetToDegrees(distanceFt);
-  
-  switch (direction) {
-    case "N":
-      return [lng, lat + dist];
-    case "S":
-      return [lng, lat - dist];
-    case "E":
-      return [lng + dist, lat];
-    case "W":
-      return [lng - dist, lat];
-    case "NE":
-      return [lng + dist * 0.707, lat + dist * 0.707];
-    case "NW":
-      return [lng - dist * 0.707, lat + dist * 0.707];
-    case "SE":
-      return [lng + dist * 0.707, lat - dist * 0.707];
-    case "SW":
-      return [lng - dist * 0.707, lat - dist * 0.707];
-    default:
-      return [lng, lat - dist];
-  }
-}
-
-/**
- * Get the "approach" direction (opposite of traffic flow direction)
- * If traffic approaches from S, we place devices to the S of the work zone
- */
-function getApproachOffset(direction: ApproachDirection): ApproachDirection {
-  // The approach direction is where we place advance warning devices
-  // (upstream of the work zone, where traffic comes from)
-  return direction;
-}
-
-/**
- * Get the perpendicular direction for taper offset
- */
-function getTaperDirection(direction: ApproachDirection): ApproachDirection {
-  switch (direction) {
-    case "N":
-    case "S":
-      return "E"; // Offset east for N/S traffic
-    case "E":
-    case "W":
-      return "N"; // Offset north for E/W traffic
-    default:
-      return "E";
-  }
-}
-
-/**
- * Find the edge of the polygon closest to the approach direction
- */
-function getApproachEdgePoint(
+function placeSigns(
+  axis: WorkZoneAxis,
   ring: number[][],
-  centroid: { lng: number; lat: number },
-  direction: ApproachDirection
-): [number, number] {
-  const bbox = computeBbox(ring);
-  
-  switch (direction) {
-    case "S":
-      return [centroid.lng, bbox.south];
-    case "N":
-      return [centroid.lng, bbox.north];
-    case "W":
-      return [bbox.west, centroid.lat];
-    case "E":
-      return [bbox.east, centroid.lat];
-    default:
-      return [centroid.lng, bbox.south];
-  }
-}
-
-/**
- * Generate a suggested field layout for a work zone
- * 
- * MVP behavior:
- * - Place 3 signs upstream of polygon centroid along approach line
- * - Place cones along a taper line toward polygon edge
- * - Use simple spacing based on speed
- */
-export function suggestFieldLayout(input: LayoutSuggestionInput): FieldLayout {
-  const {
-    polygonRing,
-    centroid,
-    roadType,
-    postedSpeedMph,
-    workType,
-    workLengthFt,
-  } = input;
-  
-  const now = new Date().toISOString();
+  config: { signSpacingFt: number[] }
+): FieldDevice[] {
   const devices: FieldDevice[] = [];
   
-  // Infer approach direction
-  const direction = inferApproachDirection(polygonRing);
-  
-  // Get spacing values for this speed
-  const { signSpacing, coneSpacing } = getSpacingForSpeed(postedSpeedMph);
-  
-  // Get the edge of the work zone closest to approaching traffic
-  const approachEdge = getApproachEdgePoint(polygonRing, centroid, direction);
-  
-  // ============================================
-  // PLACE ADVANCE WARNING SIGNS (A, B, C)
-  // ============================================
-  // Signs are placed upstream of the work zone, in the approach direction
-  const signCount = 3;
-  for (let i = 0; i < signCount; i++) {
-    const distanceFromEdge = signSpacing * (signCount - i); // A is furthest, C is closest
-    const signPos = offsetPoint(approachEdge, distanceFromEdge, direction);
+  for (let i = 0; i < config.signSpacingFt.length && i < 3; i++) {
+    const distFt = config.signSpacingFt[i];
+    const distM = distFt * FT_TO_M;
+    
+    // Place sign upstream of entry point
+    let signPos = movePoint(axis.entryPoint, distM, axis.upstreamBearing);
+    
+    // Validation: sign must be OUTSIDE polygon
+    if (isPointInPolygon(signPos, ring)) {
+      // Move further upstream until outside
+      for (let j = 1; j <= 5; j++) {
+        signPos = movePoint(axis.entryPoint, distM + j * 20, axis.upstreamBearing);
+        if (!isPointInPolygon(signPos, ring)) break;
+      }
+    }
+    
+    // Validation: sign should be within 15m of centerline (it should be on centerline by construction)
+    // This is already satisfied since we're moving along the axis
     
     devices.push({
       id: generateDeviceId(),
@@ -220,29 +370,56 @@ export function suggestFieldLayout(input: LayoutSuggestionInput): FieldLayout {
       meta: {
         sequence: i + 1,
         purpose: "advance_warning",
+        distanceFt: distFt,
       },
     });
   }
   
-  // ============================================
-  // PLACE TAPER CONES
-  // ============================================
-  // Cones form a taper from the last sign position toward the work zone
-  const taperDirection = getTaperDirection(direction);
-  const taperLength = Math.min(500, workLengthFt * 0.5); // Rough taper length
-  const coneCount = Math.max(4, Math.floor(taperLength / coneSpacing));
+  return devices;
+}
+
+/**
+ * Place cones as a taper from entry point into the polygon
+ */
+function placeCones(
+  axis: WorkZoneAxis,
+  ring: number[][],
+  config: { taperLengthFt: number; coneSpacingFt: number }
+): FieldDevice[] {
+  const devices: FieldDevice[] = [];
   
-  // Start taper at the approach edge
-  const taperStartPos = approachEdge;
+  const taperLengthM = config.taperLengthFt * FT_TO_M;
+  const coneSpacingM = config.coneSpacingFt * FT_TO_M;
   
-  for (let i = 0; i < coneCount; i++) {
-    // Move along the approach direction (toward work zone)
-    const alongDist = -coneSpacing * i; // Negative because we're moving into the work zone
-    const basePos = offsetPoint(taperStartPos, alongDist, direction);
+  // Taper direction: from entry point toward centroid (into polygon)
+  const taperBearing = bearing(axis.entryPoint, axis.centroid);
+  
+  // Perpendicular offset for creating a taper line (alternating sides)
+  const perpBearing = taperBearing + Math.PI / 2;
+  const perpOffset = 2; // meters, alternating left/right
+  
+  const numCones = Math.max(4, Math.floor(taperLengthM / coneSpacingM));
+  
+  for (let i = 0; i < numCones; i++) {
+    const distAlongTaper = i * coneSpacingM;
     
-    // Also offset perpendicular to create the taper angle
-    const perpOffset = (coneSpacing * i) * 0.3; // Gradual taper
-    const conePos = offsetPoint(basePos, perpOffset, taperDirection);
+    // Base position along taper line
+    let conePos = movePoint(axis.entryPoint, distAlongTaper, taperBearing);
+    
+    // Add perpendicular offset for taper angle
+    // Offset increases as we move into the polygon (creates taper shape)
+    const taperOffset = (i / numCones) * 3; // max 3m lateral shift
+    const sideMultiplier = i % 2 === 0 ? 1 : -1; // alternate sides for visual effect
+    conePos = movePoint(conePos, taperOffset + sideMultiplier * perpOffset * 0.5, perpBearing);
+    
+    // Validation: cone should be INSIDE polygon or within 5m of boundary
+    const distToPoly = distanceToPolygon(conePos, ring);
+    const isInside = isPointInPolygon(conePos, ring);
+    
+    if (!isInside && distToPoly > 5) {
+      // Clamp to polygon boundary
+      conePos = clampToPolygon(conePos, ring);
+    }
     
     devices.push({
       id: generateDeviceId(),
@@ -255,52 +432,123 @@ export function suggestFieldLayout(input: LayoutSuggestionInput): FieldLayout {
     });
   }
   
-  // ============================================
-  // PLACE FLAGGERS (for specific work types)
-  // ============================================
-  if (workType === "one_lane_two_way_flaggers") {
-    // Place flagger at approach edge
-    devices.push({
-      id: generateDeviceId(),
-      type: "flagger",
-      lngLat: offsetPoint(approachEdge, 50, direction), // 50 ft from edge
-      label: "F1",
-      meta: {
-        purpose: "traffic_control",
-      },
-    });
-    
-    // Place flagger at downstream edge (opposite direction)
-    const oppositeDirection = direction === "S" ? "N" : direction === "N" ? "S" : direction === "W" ? "E" : "W";
-    const downstreamEdge = getApproachEdgePoint(polygonRing, centroid, oppositeDirection as ApproachDirection);
-    devices.push({
-      id: generateDeviceId(),
-      type: "flagger",
-      lngLat: offsetPoint(downstreamEdge, 50, oppositeDirection as ApproachDirection),
-      label: "F2",
-      meta: {
-        purpose: "traffic_control",
-      },
-    });
+  return devices;
+}
+
+/**
+ * Place flaggers at entry and exit points (for applicable work types)
+ */
+function placeFlaggers(axis: WorkZoneAxis): FieldDevice[] {
+  const devices: FieldDevice[] = [];
+  
+  // Flagger 1: upstream of entry point
+  const flagger1Pos = movePoint(axis.entryPoint, 15, axis.upstreamBearing);
+  devices.push({
+    id: generateDeviceId(),
+    type: "flagger",
+    lngLat: flagger1Pos,
+    label: "F1",
+    meta: { purpose: "traffic_control", position: "upstream" },
+  });
+  
+  // Flagger 2: downstream of exit point
+  const downstreamBearing = axis.upstreamBearing + Math.PI;
+  const flagger2Pos = movePoint(axis.exitPoint, 15, downstreamBearing);
+  devices.push({
+    id: generateDeviceId(),
+    type: "flagger",
+    lngLat: flagger2Pos,
+    label: "F2",
+    meta: { purpose: "traffic_control", position: "downstream" },
+  });
+  
+  return devices;
+}
+
+/**
+ * Place arrow board near entry point (for lane closures at higher speeds)
+ */
+function placeArrowBoard(axis: WorkZoneAxis, ring: number[][]): FieldDevice[] {
+  // Arrow board position: just upstream of entry point
+  let arrowPos = movePoint(axis.entryPoint, 30, axis.upstreamBearing);
+  
+  // Ensure outside polygon
+  if (isPointInPolygon(arrowPos, ring)) {
+    arrowPos = movePoint(axis.entryPoint, 50, axis.upstreamBearing);
   }
   
-  // ============================================
-  // PLACE ARROW BOARD (for lane closures)
-  // ============================================
-  if (workType === "lane_closure" && postedSpeedMph >= 45) {
-    // Arrow board placed at the beginning of the taper
-    const arrowPos = offsetPoint(taperStartPos, signSpacing * 0.5, direction);
-    devices.push({
-      id: generateDeviceId(),
-      type: "arrowBoard",
-      lngLat: arrowPos,
-      label: "AB",
-      rotation: direction === "S" ? 0 : direction === "N" ? 180 : direction === "W" ? 90 : 270,
-      meta: {
-        purpose: "lane_closure_warning",
-      },
-    });
+  // Convert bearing to rotation degrees (0 = north, clockwise)
+  const rotationDeg = ((axis.upstreamBearing + Math.PI) * 180 / Math.PI + 360) % 360;
+  
+  return [{
+    id: generateDeviceId(),
+    type: "arrowBoard",
+    lngLat: arrowPos,
+    label: "AB",
+    rotation: Math.round(rotationDeg),
+    meta: { purpose: "lane_closure_warning" },
+  }];
+}
+
+// ============================================
+// MAIN EXPORT
+// ============================================
+
+/**
+ * Generate a suggested field layout for a work zone
+ * 
+ * Street-aware algorithm:
+ * 1. Derive work zone axis from polygon geometry
+ * 2. Place signs upstream along the axis (outside polygon)
+ * 3. Place cones as a taper from entry point (inside polygon)
+ * 4. Validate all placements
+ */
+export function suggestFieldLayout(input: LayoutSuggestionInput): FieldLayout {
+  const {
+    polygonRing,
+    centroid: inputCentroid,
+    roadType,
+    postedSpeedMph,
+    workType,
+    workLengthFt,
+  } = input;
+  
+  const now = new Date().toISOString();
+  const devices: FieldDevice[] = [];
+  
+  // Get speed-based configuration
+  const config = getSpeedConfig(postedSpeedMph);
+  
+  // Derive work zone axis from polygon geometry
+  const axis = deriveWorkZoneAxis(polygonRing);
+  
+  // Place signs (always)
+  const signs = placeSigns(axis, polygonRing, config);
+  devices.push(...signs);
+  
+  // Place cones (always)
+  const cones = placeCones(axis, polygonRing, config);
+  devices.push(...cones);
+  
+  // Place flaggers (for specific work types)
+  if (workType === "one_lane_two_way_flaggers") {
+    const flaggers = placeFlaggers(axis);
+    devices.push(...flaggers);
   }
+  
+  // Place arrow board (for lane closures at higher speeds)
+  if (workType === "lane_closure" && postedSpeedMph >= 45) {
+    const arrowBoards = placeArrowBoard(axis, polygonRing);
+    devices.push(...arrowBoards);
+  }
+  
+  // Determine approach direction from axis bearing
+  const bearingDeg = (axis.upstreamBearing * 180 / Math.PI + 360) % 360;
+  let direction: ApproachDirection;
+  if (bearingDeg >= 315 || bearingDeg < 45) direction = "N";
+  else if (bearingDeg >= 45 && bearingDeg < 135) direction = "E";
+  else if (bearingDeg >= 135 && bearingDeg < 225) direction = "S";
+  else direction = "W";
   
   return {
     version: 1,
@@ -322,4 +570,3 @@ export function countDevicesByType(layout: FieldLayout): Record<string, number> 
   }
   return counts;
 }
-
