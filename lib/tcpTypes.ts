@@ -31,6 +31,17 @@ export type TcpGeometry = {
   polygon?: PolygonRing[];
 };
 
+// Job Owner schema (company/contractor information)
+export const jobOwnerSchema = z.object({
+  companyName: z.string(),
+  contractorName: z.string(),
+  phone: z.string(),
+  jobNumber: z.string().optional(),
+  jobAssignedDate: z.string().optional(), // ISO format: yyyy-mm-dd
+});
+
+export type JobOwner = z.infer<typeof jobOwnerSchema>;
+
 export const tcpDraftRequestSchema = z.object({
   geometry: tcpGeometrySchema,
   locationLabel: z.string().optional(),
@@ -48,6 +59,7 @@ export const tcpDraftRequestSchema = z.object({
   workLengthFt: z.number(),
   isNight: z.boolean(),
   notes: z.string().optional(),
+  jobOwner: jobOwnerSchema.optional(), // Company/contractor info
 });
 
 export type TcpDraftRequest = z.infer<typeof tcpDraftRequestSchema>;

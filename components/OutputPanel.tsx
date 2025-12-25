@@ -36,6 +36,15 @@ const panelTransition = {
   ease: "easeInOut" as const,
 };
 
+/** Job Owner / Company info for display and export */
+export interface JobOwnerInfo {
+  companyName: string;
+  contractorName: string;
+  phone: string;
+  jobNumber?: string;
+  jobAssignedDate?: string;
+}
+
 export interface JobInfoForExport {
   locationLabel: string;
   roadType: string;
@@ -43,6 +52,7 @@ export interface JobInfoForExport {
   workType: string;
   workLengthFt: number;
   isNight: boolean;
+  jobOwner?: JobOwnerInfo;
 }
 
 // Extended error object that may include coverage gate details
@@ -181,6 +191,11 @@ export default function OutputPanel({
       const jobStr = jobInfo
         ? `${jobInfo.roadType}, ${jobInfo.postedSpeedMph} mph, ${jobInfo.workType}, ${jobInfo.workLengthFt} ft, ${jobInfo.isNight ? "Night" : "Day"}`
         : "Job details not available";
+      const companyStr = jobInfo?.jobOwner?.companyName || "";
+      const contractorStr = jobInfo?.jobOwner 
+        ? `${jobInfo.jobOwner.contractorName} | ${jobInfo.jobOwner.phone}`
+        : "";
+      const jobNumberStr = jobInfo?.jobOwner?.jobNumber || "";
 
       // Capture the content with safe color overrides to avoid lab()/oklab() parsing errors
       const canvas = await html2canvas(exportRef.current, {
@@ -263,7 +278,9 @@ export default function OutputPanel({
       // Margins
       const marginX = 10;
       const marginTop = 10;
-      const headerHeight = 35;
+      // Adjust header height based on whether company info is present
+      const hasCompanyInfo = !!companyStr;
+      const headerHeight = hasCompanyInfo ? 52 : 35;
       const contentStartY = marginTop + headerHeight;
 
       // Scale image to fit page width (accounting for margins)
@@ -284,11 +301,29 @@ export default function OutputPanel({
       pdf.setFont("helvetica", "normal");
       pdf.text(`Generated: ${dateStr}`, marginX, marginTop + 14);
       pdf.text(`Location: ${locationStr}`, marginX, marginTop + 21);
-      pdf.text(`Job: ${jobStr}`, marginX, marginTop + 28);
+      
+      let headerY = marginTop + 28;
+      if (hasCompanyInfo) {
+        pdf.setFont("helvetica", "bold");
+        pdf.text(`Company: ${companyStr}`, marginX, headerY);
+        headerY += 7;
+        pdf.setFont("helvetica", "normal");
+        if (contractorStr) {
+          pdf.text(`Contact: ${contractorStr}`, marginX, headerY);
+          headerY += 7;
+        }
+        if (jobNumberStr) {
+          pdf.text(`Job #: ${jobNumberStr}`, marginX, headerY);
+          headerY += 7;
+        }
+      }
+      
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`Job: ${jobStr}`, marginX, headerY);
 
       // Draw a line under header
       pdf.setDrawColor(200);
-      pdf.line(marginX, marginTop + 32, pageWidth - marginX, marginTop + 32);
+      pdf.line(marginX, headerY + 4, pageWidth - marginX, headerY + 4);
 
       // Calculate how many pages we need
       let remainingHeight = scaledHeight;
@@ -539,6 +574,22 @@ export default function OutputPanel({
                   <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">
                     Current Input Summary
                   </h4>
+                  
+                  {/* Job Owner Info */}
+                  {jobInfo.jobOwner && (
+                    <div className="mb-3 pb-3 border-b border-slate-200">
+                      <div className="text-xs font-semibold text-slate-700 mb-1">
+                        {jobInfo.jobOwner.companyName}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        {jobInfo.jobOwner.contractorName} • {jobInfo.jobOwner.phone}
+                        {jobInfo.jobOwner.jobNumber && (
+                          <span className="ml-2 text-slate-400">Job #{jobInfo.jobOwner.jobNumber}</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
                   <div className="grid grid-cols-2 gap-3 text-xs">
                     <div className="flex justify-between">
                       <span className="text-slate-500">Road Type:</span>

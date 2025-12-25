@@ -365,6 +365,10 @@ export default function PlannerPage() {
       workLengthFt: jobDetails.workLengthFt,
       isNight: jobDetails.isNight,
       notes: jobDetails.notes || undefined,
+      // Include job owner info if complete
+      jobOwner: jobDetails.jobOwner.companyName && jobDetails.jobOwner.contractorName && jobDetails.jobOwner.phone
+        ? jobDetails.jobOwner
+        : undefined,
     };
 
     if (geometry.type === "bbox") {
@@ -719,6 +723,7 @@ export default function PlannerPage() {
                           workType: jobDetails.workType,
                           workLengthFt: jobDetails.workLengthFt,
                           isNight: jobDetails.isNight,
+                          jobOwner: jobDetails.jobOwner,
                         }
                       : null
                   }
