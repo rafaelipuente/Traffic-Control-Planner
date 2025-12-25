@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import dynamic from "next/dynamic";
 import JobDetailsForm, { JobDetails } from "@/components/JobDetailsForm";
 import OutputPanel from "@/components/OutputPanel";
@@ -10,6 +10,22 @@ import Toast from "@/components/Toast";
 import { TcpDraftResponse, Bbox, PolygonRing, CoverageInfo } from "@/lib/tcpTypes";
 import { GeometryOutput } from "@/components/MapSelector";
 import { DiagramGeometry } from "@/lib/diagram/types";
+
+/**
+ * Build a stable signature string from job inputs that affect plan calculations.
+ * Used to detect when inputs change after a plan was generated.
+ */
+function buildPlanSignature(jobDetails: JobDetails | null): string {
+  if (!jobDetails) return "";
+  return JSON.stringify({
+    roadType: jobDetails.roadType,
+    postedSpeedMph: jobDetails.postedSpeedMph,
+    workType: jobDetails.workType,
+    workLengthFt: jobDetails.workLengthFt,
+    isNight: jobDetails.isNight,
+    // Notes intentionally excluded - they don't affect numeric calculations
+  });
+}
 
 // Dynamic import for MapSelector to avoid SSR issues with Mapbox
 const MapSelector = dynamic(() => import("@/components/MapSelector"), {
@@ -48,6 +64,10 @@ export default function PlannerPage() {
   
   // Toast notification state
   const [showToast, setShowToast] = useState<boolean>(false);
+  const [toastMessage, setToastMessage] = useState<string>("");
+
+  // Plan signature tracking for dirty state detection
+  const [lastGeneratedSignature, setLastGeneratedSignature] = useState<string>("");
 
   // Progress state
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
@@ -143,6 +163,7 @@ export default function PlannerPage() {
       setRawJson(null);
       setError(null);
       setErrorDetails(null);
+      setLastGeneratedSignature(""); // Clear signature on reset
       // Reset progress state in case of interrupted generation
       setElapsedSeconds(0);
       setProgressStep(0);
@@ -160,6 +181,16 @@ export default function PlannerPage() {
   }, []);
 
   const canGenerate = geometry !== null && jobValid && !isLoading;
+
+  // Derive current signature from current job details
+  const currentSignature = useMemo(() => buildPlanSignature(jobDetails), [jobDetails]);
+
+  // Plan is "dirty" if we have a generated plan but inputs have changed since generation
+  const isPlanDirty = useMemo(() => {
+    if (!response) return false; // No plan yet, can't be dirty
+    if (!lastGeneratedSignature) return false; // No previous signature (shouldn't happen)
+    return currentSignature !== lastGeneratedSignature;
+  }, [response, lastGeneratedSignature, currentSignature]);
 
   const buildRequest = useCallback(() => {
     if (!geometry || !jobDetails) return null;
@@ -256,7 +287,13 @@ export default function PlannerPage() {
       if (isMountedRef.current) {
         setResponse(data);
         setRawJson(JSON.stringify(data, null, 2));
-        setShowToast(true); // Show refinement notification
+        
+        // Store the signature that was used to generate this plan
+        setLastGeneratedSignature(buildPlanSignature(jobDetails));
+        
+        // Show success toast with appropriate message
+        setToastMessage("Plan Refined: AI updated spacing and taper based on MUTCD Table 6C-2.");
+        setShowToast(true);
       }
     } catch (err) {
       if (isMountedRef.current) {
@@ -437,6 +474,7 @@ export default function PlannerPage() {
                   canRegenerate={canGenerate}
                   hasGeometry={geometry !== null}
                   hasGeneratedPlan={response !== null}
+                  isPlanDirty={isPlanDirty}
                   jobInfo={
                     jobDetails
                       ? {
@@ -497,7 +535,7 @@ export default function PlannerPage() {
 
       {/* Toast notification for AI refinement feedback */}
       <Toast
-        message="Plan Refined: AI updated spacing and taper based on MUTCD Table 6C-2."
+        message={toastMessage}
         visible={showToast}
         onClose={() => setShowToast(false)}
         duration={3000}

@@ -52,6 +52,8 @@ export interface OutputPanelProps {
   hasGeometry: boolean;
   /** Whether an AI-generated plan exists */
   hasGeneratedPlan: boolean;
+  /** Whether inputs have changed since the plan was generated */
+  isPlanDirty?: boolean;
   jobInfo?: JobInfoForExport | null;
   /** Geometry from map selection for dynamic diagram */
   geometry?: DiagramGeometry | null;
@@ -67,6 +69,7 @@ export default function OutputPanel({
   canRegenerate,
   hasGeometry,
   hasGeneratedPlan,
+  isPlanDirty = false,
   jobInfo,
   geometry,
 }: OutputPanelProps) {
@@ -295,14 +298,15 @@ export default function OutputPanel({
   const isEmpty = !hasGeometry && !isGenerated;
 
   // Calculate panel state index for TransitionPanel
-  // 0: empty, 1: preview, 2: loading, 3: error, 4: generated
+  // 0: empty, 1: preview, 2: loading, 3: error, 4: generated (valid), 5: generated (dirty/invalidated)
   const panelStateIndex = useMemo(() => {
     if (isLoading) return 2;
     if (error) return 3;
+    if (isGenerated && response && isPlanDirty) return 5; // Dirty state
     if (isGenerated && response) return 4;
     if (isPreview) return 1;
     return 0; // empty
-  }, [isLoading, error, isGenerated, response, isPreview]);
+  }, [isLoading, error, isGenerated, response, isPreview, isPlanDirty]);
 
   return (
     <div className="flex flex-col h-full bg-white relative">
@@ -328,10 +332,16 @@ export default function OutputPanel({
               Preview (Estimated)
             </span>
           )}
-          {isGenerated && !isLoading && (
+          {isGenerated && !isLoading && !isPlanDirty && (
             <span className="inline-flex items-center gap-2 px-3 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold uppercase tracking-wider rounded-sm border border-emerald-100">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
               AI-Verified
+            </span>
+          )}
+          {isGenerated && !isLoading && isPlanDirty && (
+            <span className="inline-flex items-center gap-2 px-3 py-1 bg-amber-50 text-amber-700 text-[10px] font-bold uppercase tracking-wider rounded-sm border border-amber-200">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+              Outdated
             </span>
           )}
           {isLoading && (
@@ -359,70 +369,80 @@ export default function OutputPanel({
           {/* =====================================
               STATE 0: EMPTY (No geometry)
               ===================================== */}
-          <div className="flex flex-col gap-8 h-full">
+          <div className="flex flex-col gap-6 h-full">
             {/* Structured Empty State Block */}
             <InView variants="fadeUp" delay={0}>
-              <div className="flex flex-col items-center justify-center text-center py-8 border-b border-dashed border-slate-200">
-                <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mb-3 border border-slate-100">
-                  <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+              <div className="flex flex-col items-center justify-center text-center py-6">
+                <div className="w-14 h-14 bg-slate-50 rounded-full flex items-center justify-center mb-4 border border-slate-200">
+                  <svg className="w-7 h-7 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
                   </svg>
                 </div>
-                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide mb-1">
-                  No Work Zone Selected
+                <h3 className="text-base font-bold text-slate-800 mb-2">
+                  Ready to Generate TCP
                 </h3>
-                <p className="text-xs text-slate-500 max-w-xs leading-relaxed">
-                  Define the work zone on the map to activate the schematic preview.
+                <p className="text-sm text-slate-500 max-w-sm leading-relaxed mb-6">
+                  Complete the steps below to generate an AI-verified traffic control plan.
                 </p>
-                <div className="mt-4 text-[10px] font-mono text-slate-400 bg-slate-50 px-2 py-1 rounded-sm border border-slate-100">
-                  Step 1 of 3: Define Work Zone
-                </div>
-              </div>
-            </InView>
 
-            {/* Dormant Diagram Preview */}
-            <InView variants="fadeUp" delay={0.08}>
-              <div className="space-y-2 opacity-60">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Schematic Preview</span>
-                  <span className="text-[10px] font-mono text-slate-300">INACTIVE</span>
-                </div>
-                <div className="w-full h-48 bg-slate-50 border border-dashed border-slate-200 rounded-sm relative overflow-hidden flex items-center justify-center">
-                  {/* Grid pattern background */}
-                  <div className="absolute inset-0 opacity-[0.03]" 
-                       style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '20px 20px' }} 
-                  />
-                  <div className="text-center z-10">
-                    <span className="block text-xs font-bold text-slate-300 uppercase tracking-widest mb-1">Dormant</span>
-                    <svg className="w-8 h-8 text-slate-200 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                {/* Step Checklist */}
+                <div className="w-full max-w-xs space-y-2">
+                  <div className="flex items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-sm">
+                    <div className="w-6 h-6 rounded-full bg-[#FFB300] text-white flex items-center justify-center text-xs font-bold">1</div>
+                    <div className="flex-1 text-left">
+                      <span className="text-xs font-bold text-amber-800">Define Work Zone</span>
+                      <p className="text-[10px] text-amber-600">Draw area on map</p>
+                    </div>
+                    <svg className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
+                  </div>
+
+                  <div className="flex items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded-sm opacity-60">
+                    <div className="w-6 h-6 rounded-full bg-slate-300 text-white flex items-center justify-center text-xs font-bold">2</div>
+                    <div className="flex-1 text-left">
+                      <span className="text-xs font-medium text-slate-600">Configure Job Details</span>
+                      <p className="text-[10px] text-slate-400">Road type, speed, operation</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded-sm opacity-60">
+                    <div className="w-6 h-6 rounded-full bg-slate-300 text-white flex items-center justify-center text-xs font-bold">3</div>
+                    <div className="flex-1 text-left">
+                      <span className="text-xs font-medium text-slate-600">Generate Plan</span>
+                      <p className="text-[10px] text-slate-400">AI verification with MUTCD</p>
+                    </div>
                   </div>
                 </div>
               </div>
             </InView>
 
-            {/* Placeholder / Ghost Sections */}
-            <InView variants="fade" delay={0.16}>
-              <div className="space-y-6 opacity-40 select-none grayscale">
-              {/* Summary Skeleton */}
-              <div className="space-y-2">
-                <div className="h-3 w-32 bg-slate-100 rounded-sm" />
-                <div className="h-20 w-full bg-slate-50 border border-slate-100 rounded-sm" />
-              </div>
-              
-              {/* Details Skeleton */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                   <div className="h-3 w-24 bg-slate-100 rounded-sm" />
-                   <div className="h-24 w-full bg-slate-50 border border-slate-100 rounded-sm" />
+            {/* What You'll Get Section */}
+            <InView variants="fadeUp" delay={0.1}>
+              <div className="border-t border-dashed border-slate-200 pt-6">
+                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3 text-center">
+                  What You&apos;ll Get
+                </h4>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="text-center p-3 bg-slate-50 rounded-sm border border-slate-100">
+                    <svg className="w-5 h-5 text-slate-400 mx-auto mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <span className="text-[10px] font-medium text-slate-600">Schematic</span>
+                  </div>
+                  <div className="text-center p-3 bg-slate-50 rounded-sm border border-slate-100">
+                    <svg className="w-5 h-5 text-slate-400 mx-auto mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span className="text-[10px] font-medium text-slate-600">Compliance</span>
+                  </div>
+                  <div className="text-center p-3 bg-slate-50 rounded-sm border border-slate-100">
+                    <svg className="w-5 h-5 text-slate-400 mx-auto mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                    </svg>
+                    <span className="text-[10px] font-medium text-slate-600">Specifications</span>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                   <div className="h-3 w-24 bg-slate-100 rounded-sm" />
-                   <div className="h-24 w-full bg-slate-50 border border-slate-100 rounded-sm" />
-                </div>
-              </div>
               </div>
             </InView>
           </div>
@@ -448,19 +468,68 @@ export default function OutputPanel({
               </div>
             </InView>
             
-            {/* Preview disclaimer */}
-            <InView variants="fadeUp" delay={0.08}>
+            {/* Estimated Input Summary */}
+            {jobInfo && (
+              <InView variants="fadeUp" delay={0.06}>
+                <div className="bg-slate-50 border border-slate-200 rounded-sm p-4">
+                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">
+                    Current Input Summary
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Road Type:</span>
+                      <span className="font-medium text-slate-700">{jobInfo.roadType.replace(/_/g, " ")}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Speed:</span>
+                      <span className="font-medium text-slate-700 font-mono">{jobInfo.postedSpeedMph} mph</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Operation:</span>
+                      <span className="font-medium text-slate-700">{jobInfo.workType.replace(/_/g, " ")}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Work Length:</span>
+                      <span className="font-medium text-slate-700 font-mono">{jobInfo.workLengthFt} ft</span>
+                    </div>
+                    <div className="flex justify-between col-span-2">
+                      <span className="text-slate-500">Time:</span>
+                      <span className="font-medium text-slate-700">{jobInfo.isNight ? "Night Operation" : "Day Operation"}</span>
+                    </div>
+                  </div>
+                </div>
+              </InView>
+            )}
+
+            {/* What's Next Block */}
+            <InView variants="fadeUp" delay={0.1}>
               <div className="bg-amber-50/50 border border-amber-100 rounded-sm p-4 flex gap-3">
                 <div className="text-amber-500 mt-0.5">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
                 </div>
                 <div>
                   <p className="text-xs font-bold text-amber-800 uppercase tracking-wide mb-1">
-                    Awaiting Generation
+                    Ready to Generate
                   </p>
-                  <p className="text-xs text-amber-700/80 leading-relaxed">
-                    Current values are placeholders. Generate the plan to apply MUTCD rules for spacing, taper lengths, and device counts.
+                  <p className="text-xs text-amber-700/80 leading-relaxed mb-3">
+                    Click <strong>&quot;Generate Draft Plan&quot;</strong> to apply MUTCD rules for spacing, taper lengths, and device requirements.
                   </p>
+                  <div className="flex flex-wrap gap-2">
+                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-white border border-amber-200 rounded-sm text-[10px] text-amber-700">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                      MUTCD Verification
+                    </span>
+                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-white border border-amber-200 rounded-sm text-[10px] text-amber-700">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                      Device Counts
+                    </span>
+                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-white border border-amber-200 rounded-sm text-[10px] text-amber-700">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                      Compliance Check
+                    </span>
+                  </div>
                 </div>
               </div>
             </InView>
@@ -922,6 +991,75 @@ export default function OutputPanel({
             </div>
               </>
             ) : null}
+          </div>
+
+          {/* =====================================
+              STATE 5: DIRTY/INVALIDATED (Plan exists but inputs changed)
+              ===================================== */}
+          <div className="flex flex-col gap-6">
+            {/* Invalidation Warning Banner */}
+            <div className="bg-amber-50 border-2 border-amber-400 rounded-sm p-4" role="alert" aria-live="polite">
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0">
+                  <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-sm font-bold text-amber-800">
+                    ⚠ Parameters Changed — Regeneration Required
+                  </h3>
+                  <p className="mt-1 text-xs text-amber-700">
+                    One or more job inputs have been modified since this plan was generated. 
+                    The previous results may no longer be accurate for the current configuration.
+                  </p>
+                  <p className="mt-2 text-xs text-amber-600 italic">
+                    Click &quot;Regenerate Plan&quot; below to update with current parameters.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Diagram Preview - Still show but marked as outdated */}
+            <div className="bg-white border border-amber-300 rounded-sm shadow-lg p-1 relative overflow-hidden opacity-60">
+              <div className="absolute top-0 left-0 w-full h-1 bg-amber-400"></div>
+              <div className="absolute inset-0 bg-amber-50/20 pointer-events-none z-10"></div>
+              <DiagramPreview
+                geometry={geometry}
+                job={diagramJob}
+                plan={diagramPlan}
+                height={350}
+              />
+              {/* Overlay Warning */}
+              <div className="absolute top-4 right-4 bg-amber-100 text-xs font-bold text-amber-800 px-3 py-1.5 rounded-sm border border-amber-300 shadow-sm z-20">
+                OUTDATED
+              </div>
+            </div>
+
+            {/* Regenerate CTA */}
+            <div className="flex flex-col gap-3">
+              {canRegenerate && (
+                <button
+                  type="button"
+                  onClick={onRegenerate}
+                  disabled={isLoading}
+                  className="w-full px-4 py-3 bg-[#FFB300] text-slate-900 font-bold text-sm uppercase tracking-wide rounded-sm hover:bg-[#F59E0B] transition-all shadow-md border border-[#D97706] flex items-center justify-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Regenerate Plan
+                </button>
+              )}
+              <p className="text-[10px] text-slate-400 text-center font-mono">
+                Previous plan generated with different parameters
+              </p>
+            </div>
           </div>
         </TransitionPanel>
       </div>
