@@ -10,6 +10,12 @@ import Toast from "@/components/Toast";
 import { TcpDraftResponse, Bbox, PolygonRing, CoverageInfo } from "@/lib/tcpTypes";
 import { GeometryOutput } from "@/components/MapSelector";
 import { DiagramGeometry } from "@/lib/diagram/types";
+import {
+  computeWorkZoneMetadata,
+  getPolygonRing,
+  buildAutoFitStaticMapUrl,
+} from "@/lib/workZoneSnapshot";
+import { WorkZoneSnapshotData } from "@/components/OutputPanel";
 
 /**
  * Build a stable signature string from job inputs that affect plan calculations.
@@ -217,6 +223,29 @@ export default function PlannerPage() {
     if (!lastGeneratedSignature) return false; // No previous signature (shouldn't happen)
     return currentSignature !== lastGeneratedSignature;
   }, [response, lastGeneratedSignature, currentSignature]);
+
+  // Compute work zone snapshot data for instant visual feedback
+  const workZoneSnapshot: WorkZoneSnapshotData | null = useMemo(() => {
+    if (!geometry || !mapToken) return null;
+
+    const metadata = computeWorkZoneMetadata(geometry);
+    if (!metadata) return null;
+
+    const ring = getPolygonRing(geometry);
+    if (!ring || ring.length < 3) return null;
+
+    const imageUrl = buildAutoFitStaticMapUrl(mapToken, ring, {
+      width: 400,
+      height: 200,
+    });
+
+    return {
+      imageUrl,
+      vertexCount: metadata.vertexCount,
+      centroid: metadata.centroid,
+      locationLabel: locationLabel || undefined,
+    };
+  }, [geometry, mapToken, locationLabel]);
 
   const buildRequest = useCallback(() => {
     if (!geometry || !jobDetails) return null;
@@ -599,6 +628,7 @@ export default function PlannerPage() {
                         } as DiagramGeometry
                       : null
                   }
+                  workZoneSnapshot={workZoneSnapshot}
                 />
               )}
             </div>

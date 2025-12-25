@@ -40,6 +40,18 @@ export interface CoverageGateErrorDetails {
   message?: string;
 }
 
+/** Work zone snapshot metadata */
+export interface WorkZoneSnapshotData {
+  /** Static map image URL from Mapbox */
+  imageUrl: string;
+  /** Vertex count of the polygon */
+  vertexCount: number;
+  /** Center point of the work zone */
+  centroid: { lng: number; lat: number };
+  /** Location label from geocoder */
+  locationLabel?: string;
+}
+
 export interface OutputPanelProps {
   response: TcpDraftResponse | null;
   rawJson: string | null;
@@ -57,6 +69,8 @@ export interface OutputPanelProps {
   jobInfo?: JobInfoForExport | null;
   /** Geometry from map selection for dynamic diagram */
   geometry?: DiagramGeometry | null;
+  /** Work zone snapshot for instant visual feedback */
+  workZoneSnapshot?: WorkZoneSnapshotData | null;
 }
 
 export default function OutputPanel({
@@ -72,6 +86,7 @@ export default function OutputPanel({
   isPlanDirty = false,
   jobInfo,
   geometry,
+  workZoneSnapshot,
 }: OutputPanelProps) {
   const [isExporting, setIsExporting] = useState(false);
   const [showCoverageDetails, setShowCoverageDetails] = useState(false);
@@ -466,8 +481,55 @@ export default function OutputPanel({
               STATE 1: PREVIEW (Geometry exists, no AI plan yet)
               ===================================== */}
           <div className="flex flex-col gap-6">
+            {/* Work Zone Snapshot Card - Instant visual feedback */}
+            {workZoneSnapshot && (
+              <InView variants="fadeUp" delay={0}>
+                <div className="bg-white border border-slate-200 rounded-sm shadow-sm overflow-hidden">
+                  <div className="px-3 py-2 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-[#FFB300]"></div>
+                      <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                        Work Zone Snapshot
+                      </h3>
+                    </div>
+                    <span className="text-[10px] font-mono text-slate-400">MAP-PREVIEW</span>
+                  </div>
+                  
+                  {/* Static Map Image */}
+                  <div className="relative">
+                    <img
+                      src={workZoneSnapshot.imageUrl}
+                      alt={`Work zone map preview${workZoneSnapshot.locationLabel ? ` near ${workZoneSnapshot.locationLabel}` : ""}`}
+                      className="w-full h-auto object-cover"
+                      loading="eager"
+                    />
+                    {/* Location overlay */}
+                    {workZoneSnapshot.locationLabel && (
+                      <div className="absolute bottom-2 left-2 right-2 bg-white/90 backdrop-blur-sm rounded-sm px-2 py-1 text-xs text-slate-700 truncate border border-slate-200 shadow-sm">
+                        📍 {workZoneSnapshot.locationLabel}
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Metadata Row */}
+                  <div className="px-3 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-[10px]">
+                    <div className="flex items-center gap-3">
+                      <span className="text-slate-500">
+                        <span className="font-bold text-slate-700">{workZoneSnapshot.vertexCount}</span> vertices
+                      </span>
+                      <span className="text-slate-300">|</span>
+                      <span className="text-slate-500 font-mono">
+                        {workZoneSnapshot.centroid.lat.toFixed(5)}, {workZoneSnapshot.centroid.lng.toFixed(5)}
+                      </span>
+                    </div>
+                    <span className="text-emerald-600 font-bold uppercase">✓ Captured</span>
+                  </div>
+                </div>
+              </InView>
+            )}
+
             {/* Diagram Preview - Geometry Only */}
-            <InView variants="fadeUp" delay={0}>
+            <InView variants="fadeUp" delay={workZoneSnapshot ? 0.06 : 0}>
               <div className="bg-white border border-slate-200 rounded-sm shadow-lg p-1 relative overflow-hidden group">
                 <div className="absolute top-0 left-0 w-full h-1 bg-amber-400 opacity-50"></div>
                 <DiagramPreview
