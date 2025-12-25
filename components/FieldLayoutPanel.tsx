@@ -19,11 +19,14 @@ import {
   FieldLayout,
   FieldDevice,
   DeviceType,
+  SignSubtype,
   DEVICE_ICONS,
+  SIGN_SUBTYPES,
   generateDeviceId,
   cloneLayout,
   RoadPolyline,
 } from "@/lib/layoutTypes";
+import { createDeviceMarkerElement } from "@/lib/deviceIcons";
 import { normalizeRoadFeatures } from "@/lib/layout/suggestFieldLayout";
 import DiagramPreview from "./DiagramPreview";
 import { DiagramGeometry, DiagramJobData, DiagramPlanData } from "@/lib/diagram/types";
@@ -114,6 +117,16 @@ export interface FieldLayoutPanelProps {
 type ActiveTab = "mockup" | "schematic";
 type EditTool = "select" | "addCone" | "addSign" | "delete";
 
+// Available sign subtypes for the toolbar dropdown
+const SIGN_SUBTYPE_OPTIONS: { value: SignSubtype; label: string }[] = [
+  { value: "roadWorkAhead", label: "Road Work Ahead" },
+  { value: "bePreparedToStop", label: "Be Prepared to Stop" },
+  { value: "flaggerAhead", label: "Flagger Ahead" },
+  { value: "rightLaneClosed", label: "Right Lane Closed" },
+  { value: "leftLaneClosed", label: "Left Lane Closed" },
+  { value: "oneLaneRoadAhead", label: "One Lane Road" },
+];
+
 // Debug state for edit mode (dev-only)
 interface EditDebugState {
   activeTool: EditTool;
@@ -175,6 +188,7 @@ export default function FieldLayoutPanel({
   const [activeTool, setActiveTool] = useState<EditTool>("select");
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [draggingDeviceId, setDraggingDeviceId] = useState<string | null>(null);
+  const [selectedSignSubtype, setSelectedSignSubtype] = useState<SignSubtype>("roadWorkAhead");
   
   // Debug state (dev-only)
   const [debugState, setDebugState] = useState<EditDebugState>({
@@ -195,12 +209,14 @@ export default function FieldLayoutPanel({
   const isEditModeRef = useRef<boolean>(isEditMode);
   const layoutRef = useRef<FieldLayout | null>(layout);
   const onLayoutChangeRef = useRef<(layout: FieldLayout) => void>(onLayoutChange);
+  const selectedSignSubtypeRef = useRef<SignSubtype>(selectedSignSubtype);
   
   // Keep refs in sync with state/props
   useEffect(() => { activeToolRef.current = activeTool; }, [activeTool]);
   useEffect(() => { isEditModeRef.current = isEditMode; }, [isEditMode]);
   useEffect(() => { layoutRef.current = layout; }, [layout]);
   useEffect(() => { onLayoutChangeRef.current = onLayoutChange; }, [onLayoutChange]);
+  useEffect(() => { selectedSignSubtypeRef.current = selectedSignSubtype; }, [selectedSignSubtype]);
 
   // Compute bbox for viewport fitting
   const bbox = useMemo(() => {
@@ -346,9 +362,13 @@ export default function FieldLayoutPanel({
           console.error("[INVARIANT VIOLATION] addCone tool should create cone, got:", deviceType);
         }
         
+        // Get sign subtype if adding a sign
+        const currentSignSubtype = selectedSignSubtypeRef.current;
+        
         const newDevice: FieldDevice = {
           id: generateDeviceId(),
           type: deviceType,
+          subtype: deviceType === "sign" ? currentSignSubtype : undefined,
           lngLat: [e.lngLat.lng, e.lngLat.lat],
           label: deviceType === "sign" ? getNextSignLabel() : undefined,
         };
@@ -489,49 +509,22 @@ export default function FieldLayoutPanel({
       
       // Debug: Log each marker creation
       if (DEBUG_EDIT_MODE) {
-        console.log(`[Marker] Creating: id=${device.id}, type=${device.type}, emoji=${iconConfig.emoji}`);
+        console.log(`[Marker] Creating: id=${device.id}, type=${device.type}, subtype=${device.subtype || "none"}`);
       }
       
-      const el = document.createElement("div");
-      el.className = "device-marker";
-      el.setAttribute("data-device-type", device.type); // For debugging in DevTools
-      el.setAttribute("data-device-id", device.id);
-      el.style.cssText = `
-        width: 28px;
-        height: 28px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 16px;
-        cursor: ${canDrag ? "grab" : (isEditMode ? "pointer" : "default")};
-        border-radius: 50%;
-        background: ${selectedDeviceId === device.id ? "#FFB300" : "white"};
-        border: 2px solid ${selectedDeviceId === device.id ? "#D97706" : iconConfig.color};
-        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-        transition: all 0.15s ease;
-        pointer-events: auto;
-        z-index: 10;
-      `;
-      el.innerHTML = iconConfig.emoji;
+      // Use the unified SVG marker factory - SINGLE SOURCE OF TRUTH
+      const el = createDeviceMarkerElement(
+        device,
+        { 
+          selected: selectedDeviceId === device.id, 
+          draggable: canDrag 
+        }
+      );
       
-      // Add label badge if exists
-      if (device.label) {
-        const labelEl = document.createElement("span");
-        labelEl.style.cssText = `
-          position: absolute;
-          top: -8px;
-          right: -8px;
-          background: ${iconConfig.color};
-          color: white;
-          font-size: 9px;
-          font-weight: bold;
-          padding: 1px 4px;
-          border-radius: 4px;
-          font-family: monospace;
-        `;
-        labelEl.textContent = device.label;
-        el.appendChild(labelEl);
-      }
+      // Override cursor based on current mode
+      el.style.cursor = canDrag ? "grab" : (isEditMode ? "pointer" : "default");
+      
+      // The label badge is handled by createDeviceMarkerElement if device.label exists
       
       // Click to select or delete
       el.addEventListener("click", (e) => {
@@ -659,6 +652,25 @@ export default function FieldLayoutPanel({
     setSelectedDeviceId(null);
   }, [selectedDeviceId, layout, onLayoutChange]);
 
+  // Clear all devices (but keep work zone)
+  const handleClearAll = useCallback(() => {
+    if (!layout) return;
+    
+    // Confirm before clearing
+    if (!window.confirm("Clear all devices from the layout? This cannot be undone.")) {
+      return;
+    }
+    
+    console.log(`[EditMode] Clearing all ${layout.devices.length} devices`);
+    
+    const newLayout = cloneLayout(layout, "user_modified");
+    newLayout.devices = [];
+    onLayoutChange(newLayout);
+    setSelectedDeviceId(null);
+    
+    console.log("[EditMode] All devices cleared");
+  }, [layout, onLayoutChange]);
+
   // Device counts for validation display
   // CRITICAL: This must match what markers are rendered
   const deviceCounts = useMemo(() => {
@@ -780,16 +792,31 @@ export default function FieldLayoutPanel({
                   >
                     🔶
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTool("addSign")}
-                    className={`px-2 py-1 text-[10px] rounded ${
-                      activeTool === "addSign" ? "bg-slate-600 text-white" : "text-slate-400 hover:bg-slate-700"
-                    }`}
-                    title="Add Sign"
-                  >
-                    ⚠️
-                  </button>
+                  
+                  {/* Sign tool with subtype selector */}
+                  <div className="flex items-center gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTool("addSign")}
+                      className={`px-2 py-1 text-[10px] rounded-l ${
+                        activeTool === "addSign" ? "bg-slate-600 text-white" : "text-slate-400 hover:bg-slate-700"
+                      }`}
+                      title={`Add Sign: ${SIGN_SUBTYPES[selectedSignSubtype].label}`}
+                    >
+                      ⚠️
+                    </button>
+                    <select
+                      value={selectedSignSubtype}
+                      onChange={(e) => setSelectedSignSubtype(e.target.value as SignSubtype)}
+                      className="bg-slate-700 text-slate-300 text-[9px] px-1 py-1 rounded-r border-0 outline-none cursor-pointer hover:bg-slate-600"
+                      title="Select sign type"
+                    >
+                      {SIGN_SUBTYPE_OPTIONS.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
                   <button
                     type="button"
                     onClick={() => setActiveTool("delete")}
@@ -800,6 +827,19 @@ export default function FieldLayoutPanel({
                   >
                     🗑️
                   </button>
+                  
+                  <div className="w-px h-4 bg-slate-700 mx-1"></div>
+                  
+                  {/* Clear All Button */}
+                  <button
+                    type="button"
+                    onClick={handleClearAll}
+                    className="px-2 py-1 text-[9px] text-red-400 hover:bg-red-600 hover:text-white rounded transition-colors"
+                    title="Clear All Devices"
+                  >
+                    Clear All
+                  </button>
+                  
                   {selectedDeviceId && (
                     <button
                       type="button"

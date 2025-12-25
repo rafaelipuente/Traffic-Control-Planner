@@ -12,6 +12,10 @@ export interface JobDetails {
   workLengthFt: number;
   isNight: boolean;
   notes: string;
+  // Job owner / company info
+  company: string;
+  contactName?: string;
+  contactPhone?: string;
 }
 
 export interface JobDetailsFormProps {
@@ -63,10 +67,16 @@ export default function JobDetailsForm({ onChange }: JobDetailsFormProps) {
   const [workLengthFt, setWorkLengthFt] = useState<string>("500");
   const [isNight, setIsNight] = useState<boolean>(false);
   const [notes, setNotes] = useState<string>("");
+  
+  // Job owner / company info
+  const [company, setCompany] = useState<string>("");
+  const [contactName, setContactName] = useState<string>("");
+  const [contactPhone, setContactPhone] = useState<string>("");
 
   // Validation state
   const [speedError, setSpeedError] = useState<string | null>(null);
   const [lengthError, setLengthError] = useState<string | null>(null);
+  const [companyError, setCompanyError] = useState<string | null>(null);
 
   const validateAndNotify = useCallback(() => {
     const speed = Number(postedSpeedMph);
@@ -74,6 +84,7 @@ export default function JobDetailsForm({ onChange }: JobDetailsFormProps) {
 
     let speedErr: string | null = null;
     let lengthErr: string | null = null;
+    let companyErr: string | null = null;
 
     if (isNaN(speed) || postedSpeedMph.trim() === "") {
       speedErr = "Speed is required";
@@ -88,11 +99,16 @@ export default function JobDetailsForm({ onChange }: JobDetailsFormProps) {
     } else if (length <= 0) {
       lengthErr = "Work length must be greater than 0";
     }
+    
+    if (!company.trim()) {
+      companyErr = "Company/Contractor is required";
+    }
 
     setSpeedError(speedErr);
     setLengthError(lengthErr);
+    setCompanyError(companyErr);
 
-    const isValid = speedErr === null && lengthErr === null;
+    const isValid = speedErr === null && lengthErr === null && companyErr === null;
 
     const details: JobDetails = {
       roadType,
@@ -101,10 +117,13 @@ export default function JobDetailsForm({ onChange }: JobDetailsFormProps) {
       workLengthFt: isNaN(length) ? 0 : length,
       isNight,
       notes,
+      company: company.trim(),
+      contactName: contactName.trim() || undefined,
+      contactPhone: contactPhone.trim() || undefined,
     };
 
     onChange(details, isValid);
-  }, [roadType, postedSpeedMph, workType, workLengthFt, isNight, notes, onChange]);
+  }, [roadType, postedSpeedMph, workType, workLengthFt, isNight, notes, company, contactName, contactPhone, onChange]);
 
   useEffect(() => {
     validateAndNotify();
@@ -293,6 +312,67 @@ export default function JobDetailsForm({ onChange }: JobDetailsFormProps) {
             rows={3}
             placeholder="e.g. School zone nearby, maintain driveway access, limited shoulder..."
             className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-sm text-slate-900 text-sm focus:ring-1 focus:ring-[#FFB300] focus:border-[#FFB300] resize-y placeholder:text-slate-400"
+          />
+        </div>
+      </div>
+
+      {/* SECTION 3: JOB OWNER / COMPANY */}
+      <div className="space-y-4">
+        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 pb-2 mt-2">
+          Job Owner / Company
+        </h3>
+
+        {/* Company Name (Required) */}
+        <div>
+          <label htmlFor="company" className="block text-xs font-semibold text-slate-500 mb-1 uppercase tracking-wide">
+            Company / Contractor <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            id="company"
+            value={company}
+            onChange={(e) => setCompany(e.target.value)}
+            placeholder="e.g. ABC Construction Co."
+            className={`w-full px-3 py-2 bg-slate-50 border rounded-sm text-slate-900 text-sm focus:ring-1 focus:ring-[#FFB300] focus:border-[#FFB300] transition-colors ${
+              companyError ? "border-red-300 bg-red-50" : "border-slate-200"
+            }`}
+            aria-invalid={companyError ? "true" : "false"}
+            aria-describedby={companyError ? "company-error" : undefined}
+          />
+          {companyError && (
+            <p id="company-error" className="mt-1 text-xs text-red-600 font-medium">
+              {companyError}
+            </p>
+          )}
+        </div>
+
+        {/* Contact Name (Optional) */}
+        <div>
+          <label htmlFor="contactName" className="block text-xs font-semibold text-slate-500 mb-1 uppercase tracking-wide">
+            Contact Name <span className="text-slate-400 text-[10px]">(Optional)</span>
+          </label>
+          <input
+            type="text"
+            id="contactName"
+            value={contactName}
+            onChange={(e) => setContactName(e.target.value)}
+            placeholder="e.g. John Smith"
+            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-sm text-slate-900 text-sm focus:ring-1 focus:ring-[#FFB300] focus:border-[#FFB300]"
+          />
+        </div>
+
+        {/* Contact Phone (Optional) */}
+        <div>
+          <label htmlFor="contactPhone" className="block text-xs font-semibold text-slate-500 mb-1 uppercase tracking-wide">
+            Phone <span className="text-slate-400 text-[10px]">(Optional)</span>
+          </label>
+          <input
+            type="tel"
+            id="contactPhone"
+            value={contactPhone}
+            onChange={(e) => setContactPhone(e.target.value)}
+            placeholder="e.g. (555) 123-4567"
+            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-sm text-slate-900 text-sm focus:ring-1 focus:ring-[#FFB300] focus:border-[#FFB300]"
           />
         </div>
       </div>
