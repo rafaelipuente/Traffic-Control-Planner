@@ -31,6 +31,32 @@ import { DiagramGeometry, DiagramJobData, DiagramPlanData } from "@/lib/diagram/
 // DEV-ONLY: Set to true to show edit debug overlay
 const DEBUG_EDIT_MODE = false;
 
+// DEV-ONLY: Validate layout state integrity after edits
+function validateLayoutState(layout: FieldLayout, context: string): void {
+  if (!DEBUG_EDIT_MODE) return;
+  
+  // Check all devices have valid types
+  const validTypes: DeviceType[] = ["cone", "sign", "arrowBoard", "flagger", "drum", "barricade"];
+  const invalidDevices = layout.devices.filter(d => !validTypes.includes(d.type));
+  if (invalidDevices.length > 0) {
+    console.error(`[INVARIANT VIOLATION] ${context}: Invalid device types found:`, invalidDevices);
+  }
+  
+  // Check all devices have unique IDs
+  const ids = layout.devices.map(d => d.id);
+  const uniqueIds = new Set(ids);
+  if (uniqueIds.size !== ids.length) {
+    console.error(`[INVARIANT VIOLATION] ${context}: Duplicate device IDs found`);
+  }
+  
+  // Count devices by type
+  const counts: Record<string, number> = {};
+  layout.devices.forEach(d => {
+    counts[d.type] = (counts[d.type] || 0) + 1;
+  });
+  console.log(`[Layout Validation] ${context}: devices=${layout.devices.length}, counts=`, counts);
+}
+
 // Road layers to query for centerlines
 const ROAD_LAYERS = [
   "road-primary",
@@ -304,11 +330,18 @@ export default function FieldLayoutPanel({
       
       if (currentTool === "addCone" || currentTool === "addSign") {
         // CRITICAL: Map tool name to correct device type
+        // addCone → "cone", addSign → "sign"
         const deviceType: DeviceType = currentTool === "addCone" ? "cone" : "sign";
         
-        // Debug logging (dev-only)
-        if (DEBUG_EDIT_MODE) {
-          console.log(`[EditMode] Add device: tool=${currentTool}, type=${deviceType}`);
+        // Debug logging - ALWAYS log this for QA traceability
+        console.log(`[EditMode Add] tool="${currentTool}" → type="${deviceType}" at [${e.lngLat.lng.toFixed(6)}, ${e.lngLat.lat.toFixed(6)}]`);
+        
+        // INVARIANT: Verify the mapping is correct
+        if (currentTool === "addSign" && deviceType !== "sign") {
+          console.error("[INVARIANT VIOLATION] addSign tool should create sign, got:", deviceType);
+        }
+        if (currentTool === "addCone" && deviceType !== "cone") {
+          console.error("[INVARIANT VIOLATION] addCone tool should create cone, got:", deviceType);
         }
         
         const newDevice: FieldDevice = {
@@ -318,10 +351,24 @@ export default function FieldLayoutPanel({
           label: deviceType === "sign" ? getNextSignLabel() : undefined,
         };
         
+        // Verify device was created with correct type
+        console.log(`[EditMode Add] Created device: id="${newDevice.id}", type="${newDevice.type}"`);
+        
         if (currentLayout) {
           const newLayout = cloneLayout(currentLayout, "user_modified");
           newLayout.devices.push(newDevice);
+          
+          // Validate before dispatching
+          if (DEBUG_EDIT_MODE) {
+            validateLayoutState(newLayout, `after add_${deviceType}`);
+          }
+          
           onLayoutChange(newLayout);
+          
+          // Log the final counts for verification
+          const coneCount = newLayout.devices.filter(d => d.type === "cone").length;
+          const signCount = newLayout.devices.filter(d => d.type === "sign").length;
+          console.log(`[EditMode Add] Layout updated: cones=${coneCount}, signs=${signCount}, total=${newLayout.devices.length}`);
           
           // Update debug state
           if (DEBUG_EDIT_MODE) {
@@ -394,9 +441,13 @@ export default function FieldLayoutPanel({
   }, [isEditMode, activeTool]);
 
   // Render device markers
+  // This effect MUST run whenever layout changes to sync markers with state
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !layout) return;
+
+    // Log when marker sync runs
+    console.log(`[Markers Sync] Rendering ${layout.devices.length} devices. Types: ${layout.devices.map(d => d.type).join(", ")}`);
 
     // Remove old markers
     markersRef.current.forEach(marker => marker.remove());
@@ -406,12 +457,41 @@ export default function FieldLayoutPanel({
     // CRITICAL: Only enable drag in select tool mode
     const canDrag = isEditMode && activeTool === "select";
 
+    // Validate layout state before rendering markers
+    if (DEBUG_EDIT_MODE) {
+      validateLayoutState(layout, "renderMarkers");
+    }
+
     // Add new markers
     layout.devices.forEach(device => {
+      // CRITICAL: Validate device type before rendering
       const iconConfig = DEVICE_ICONS[device.type];
+      if (!iconConfig) {
+        console.error(`[Marker Error] Unknown device type: "${device.type}" for device ${device.id}`);
+        // Use a fallback visual to make the error visible
+        const errorEl = document.createElement("div");
+        errorEl.style.cssText = `
+          width: 28px; height: 28px; background: red; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 10px; color: white; font-weight: bold;
+        `;
+        errorEl.textContent = "?";
+        const errorMarker = new mapboxgl.Marker({ element: errorEl, anchor: "center" })
+          .setLngLat(device.lngLat)
+          .addTo(map);
+        markersRef.current.set(device.id, errorMarker);
+        return; // Skip this device
+      }
+      
+      // Debug: Log each marker creation
+      if (DEBUG_EDIT_MODE) {
+        console.log(`[Marker] Creating: id=${device.id}, type=${device.type}, emoji=${iconConfig.emoji}`);
+      }
       
       const el = document.createElement("div");
       el.className = "device-marker";
+      el.setAttribute("data-device-type", device.type); // For debugging in DevTools
+      el.setAttribute("data-device-id", device.id);
       el.style.cssText = `
         width: 28px;
         height: 28px;
@@ -462,11 +542,16 @@ export default function FieldLayoutPanel({
         
         if (currentTool === "delete") {
           // Delete this device
-          if (DEBUG_EDIT_MODE) {
-            console.log(`[EditMode] Delete device: ${device.id} (${device.type})`);
-          }
+          console.log(`[EditMode Delete] Removing device: id="${device.id}", type="${device.type}"`);
+          
           const newLayout = cloneLayout(currentLayout, "user_modified");
           newLayout.devices = newLayout.devices.filter(d => d.id !== device.id);
+          
+          // Log the final counts for verification
+          const coneCount = newLayout.devices.filter(d => d.type === "cone").length;
+          const signCount = newLayout.devices.filter(d => d.type === "sign").length;
+          console.log(`[EditMode Delete] Layout updated: cones=${coneCount}, signs=${signCount}, total=${newLayout.devices.length}`);
+          
           onLayoutChange(newLayout);
           setSelectedDeviceId(null);
           
@@ -555,6 +640,7 @@ export default function FieldLayoutPanel({
   }, [selectedDeviceId, layout, onLayoutChange]);
 
   // Device counts for validation display
+  // CRITICAL: This must match what markers are rendered
   const deviceCounts = useMemo(() => {
     if (!layout) return { cones: 0, signs: 0, flaggers: 0, arrowBoards: 0, total: 0 };
     const counts = { cones: 0, signs: 0, flaggers: 0, arrowBoards: 0, total: 0 };
@@ -564,7 +650,16 @@ export default function FieldLayoutPanel({
       else if (d.type === "sign") counts.signs++;
       else if (d.type === "flagger") counts.flaggers++;
       else if (d.type === "arrowBoard") counts.arrowBoards++;
+      else {
+        console.error(`[Counts Error] Unknown device type: "${d.type}" for device ${d.id}`);
+      }
     });
+    
+    // Debug: Log counts whenever they change
+    if (DEBUG_EDIT_MODE) {
+      console.log(`[Counts] cones=${counts.cones}, signs=${counts.signs}, total=${counts.total}`);
+    }
+    
     return counts;
   }, [layout]);
 
