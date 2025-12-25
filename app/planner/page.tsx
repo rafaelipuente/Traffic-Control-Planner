@@ -15,7 +15,7 @@ import {
   getPolygonRing,
 } from "@/lib/workZoneSnapshot";
 import { WorkZoneSnapshotData } from "@/components/OutputPanel";
-import { FieldLayout } from "@/lib/layoutTypes";
+import { FieldLayout, RoadPolyline } from "@/lib/layoutTypes";
 import { suggestFieldLayout } from "@/lib/layout/suggestFieldLayout";
 
 /**
@@ -80,6 +80,7 @@ export default function PlannerPage() {
   const [fieldLayout, setFieldLayout] = useState<FieldLayout | null>(null);
   const [isLayoutLocked, setIsLayoutLocked] = useState<boolean>(false);
   const [isLayoutDirty, setIsLayoutDirty] = useState<boolean>(false);
+  const [roadCenterlines, setRoadCenterlines] = useState<RoadPolyline[] | null>(null);
 
   // Progress state
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
@@ -206,6 +207,7 @@ export default function PlannerPage() {
       setFieldLayout(null);
       setIsLayoutLocked(false);
       setIsLayoutDirty(false);
+      setRoadCenterlines(null); // Clear road data
       // Reset progress state in case of interrupted generation
       setElapsedSeconds(0);
       setProgressStep(0);
@@ -253,9 +255,11 @@ export default function PlannerPage() {
     };
   }, [geometry, mapToken, locationLabel]);
 
-  // Generate initial field layout when geometry changes
+  // Generate initial field layout when geometry changes (fallback, without road data)
   useEffect(() => {
-    if (!geometry || !workZoneSnapshot || fieldLayout !== null) return;
+    // Only generate if we don't have a layout yet AND we don't have road centerlines
+    // If road centerlines are available, they will trigger regeneration below
+    if (!geometry || !workZoneSnapshot || fieldLayout !== null || roadCenterlines !== null) return;
     
     // Get polygon ring for layout suggestion
     const ring = getPolygonRing(geometry);
@@ -269,13 +273,46 @@ export default function PlannerPage() {
       postedSpeedMph: jobDetails?.postedSpeedMph ?? 35,
       workType: (jobDetails?.workType ?? "lane_closure") as "shoulder_work" | "lane_closure" | "one_lane_two_way_flaggers",
       workLengthFt: jobDetails?.workLengthFt ?? 100,
+      // No road centerlines yet - fallback method
     };
 
     const suggestedLayout = suggestFieldLayout(layoutInput);
     setFieldLayout(suggestedLayout);
     setIsLayoutLocked(false);
     setIsLayoutDirty(false);
-  }, [geometry, workZoneSnapshot, fieldLayout, jobDetails]);
+  }, [geometry, workZoneSnapshot, fieldLayout, jobDetails, roadCenterlines]);
+
+  // Regenerate layout with street-aware data when road centerlines become available
+  useEffect(() => {
+    if (!geometry || !workZoneSnapshot || !roadCenterlines || roadCenterlines.length === 0) return;
+    
+    // Get polygon ring for layout suggestion
+    const ring = getPolygonRing(geometry);
+    if (!ring || ring.length < 3) return;
+
+    // Generate street-aware layout
+    const layoutInput = {
+      polygonRing: ring,
+      centroid: workZoneSnapshot.centroid,
+      roadType: (jobDetails?.roadType ?? "2_lane_undivided") as "2_lane_undivided" | "multilane_divided" | "intersection",
+      postedSpeedMph: jobDetails?.postedSpeedMph ?? 35,
+      workType: (jobDetails?.workType ?? "lane_closure") as "shoulder_work" | "lane_closure" | "one_lane_two_way_flaggers",
+      workLengthFt: jobDetails?.workLengthFt ?? 100,
+      roadCenterlines, // Street-aware placement!
+    };
+
+    const suggestedLayout = suggestFieldLayout(layoutInput);
+    setFieldLayout(suggestedLayout);
+    setIsLayoutLocked(false);
+    setIsLayoutDirty(false);
+  }, [roadCenterlines]); // Only re-run when road centerlines change
+
+  // Handle road features extracted from map
+  const handleRoadFeaturesExtracted = useCallback((roads: RoadPolyline[]) => {
+    if (roads.length > 0) {
+      setRoadCenterlines(roads);
+    }
+  }, []);
 
   // Handle field layout changes from user edits
   const handleFieldLayoutChange = useCallback((layout: FieldLayout) => {
@@ -683,6 +720,7 @@ export default function PlannerPage() {
                   onFieldLayoutChange={handleFieldLayoutChange}
                   isLayoutLocked={isLayoutLocked}
                   onLayoutLockChange={handleLayoutLockChange}
+                  onRoadFeaturesExtracted={handleRoadFeaturesExtracted}
                 />
               )}
             </div>

@@ -10,9 +10,26 @@ import {
   DEVICE_ICONS,
   generateDeviceId,
   cloneLayout,
+  RoadPolyline,
 } from "@/lib/layoutTypes";
+import { normalizeRoadFeatures } from "@/lib/layout/suggestFieldLayout";
 import DiagramPreview from "./DiagramPreview";
 import { DiagramGeometry, DiagramJobData, DiagramPlanData } from "@/lib/diagram/types";
+
+// Road layers to query for centerlines
+const ROAD_LAYERS = [
+  "road-primary",
+  "road-secondary",
+  "road-tertiary",
+  "road-street",
+  "road-minor",
+  "road-residential",
+  "road-service",
+  "road-path",
+  // Fallback generic layers
+  "road",
+  "road-label",
+];
 
 // Safety Amber theme colors
 const AMBER_FILL = "#FFB300";
@@ -47,6 +64,8 @@ export interface FieldLayoutPanelProps {
   diagramJob?: DiagramJobData | null;
   /** Plan data for schematic tab (after generation) */
   diagramPlan?: DiagramPlanData | null;
+  /** Callback when road features are extracted from map (for street-aware layout) */
+  onRoadFeaturesExtracted?: (roads: RoadPolyline[]) => void;
   /** Whether we have a generated plan */
   hasGeneratedPlan?: boolean;
 }
@@ -98,6 +117,7 @@ export default function FieldLayoutPanel({
   geometry,
   diagramJob,
   diagramPlan,
+  onRoadFeaturesExtracted,
   hasGeneratedPlan = false,
 }: FieldLayoutPanelProps) {
   const [activeTab, setActiveTab] = useState<ActiveTab>("mockup");
@@ -191,6 +211,39 @@ export default function FieldLayoutPanel({
         // Fit to bounds
         if (bbox) {
           map.fitBounds(bbox, { padding: 60, duration: 0, maxZoom: 17 });
+        }
+
+        // Extract road features for street-aware layout (after a short delay for tiles to load)
+        if (onRoadFeaturesExtracted && bbox) {
+          setTimeout(() => {
+            try {
+              // Expand bbox slightly to capture nearby roads
+              const padding = 0.002; // ~200m padding
+              const expandedBbox: [mapboxgl.LngLatLike, mapboxgl.LngLatLike] = [
+                [bbox[0][0] - padding, bbox[0][1] - padding],
+                [bbox[1][0] + padding, bbox[1][1] + padding],
+              ];
+              
+              // Query rendered features for road layers
+              const features = map.queryRenderedFeatures(
+                [
+                  map.project(expandedBbox[0] as [number, number]),
+                  map.project(expandedBbox[1] as [number, number]),
+                ],
+                { layers: ROAD_LAYERS.filter(layer => map.getLayer(layer)) }
+              );
+              
+              // Normalize to polylines
+              const polylines = normalizeRoadFeatures(features as unknown as GeoJSON.Feature[]);
+              
+              if (polylines.length > 0) {
+                onRoadFeaturesExtracted(polylines);
+              }
+            } catch (err) {
+              // Silently fail - road extraction is optional enhancement
+              console.debug("[FieldLayoutPanel] Road feature extraction failed:", err);
+            }
+          }, 500); // Wait for tiles to render
         }
       }
     });

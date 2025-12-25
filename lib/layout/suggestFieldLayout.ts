@@ -1,9 +1,9 @@
 /**
- * Street-Aware Layout Suggestion Engine
+ * Street-Aware Layout Suggestion Engine (Phase 2)
  * 
- * Generates a credible visual mockup of TCP device placement based on
- * polygon geometry analysis. Uses a "work zone axis" derived from the
- * polygon shape to place devices realistically along a virtual centerline.
+ * Generates TCP device placement aligned to REAL streets when road centerline
+ * data is available (via queryRenderedFeatures). Falls back to polygon-axis
+ * method when no road data is provided.
  */
 
 import {
@@ -13,6 +13,7 @@ import {
   ApproachDirection,
   generateDeviceId,
   SIGN_LABELS,
+  RoadPolyline,
 } from "../layoutTypes";
 
 // ============================================
@@ -25,6 +26,9 @@ const FT_TO_M = 0.3048;
 /** Meters to approximate degrees (rough, ~45° latitude) */
 const M_TO_DEG = 1 / 111320;
 
+/** Minimum distance between devices to prevent stacking (meters) */
+const MIN_DEVICE_SPACING_M = 3;
+
 /** Speed-based spacing in feet */
 const SPEED_CONFIG: Record<number, { signSpacingFt: number[]; taperLengthFt: number; coneSpacingFt: number }> = {
   25: { signSpacingFt: [100, 200, 300], taperLengthFt: 100, coneSpacingFt: 15 },
@@ -36,6 +40,20 @@ const SPEED_CONFIG: Record<number, { signSpacingFt: number[]; taperLengthFt: num
   55: { signSpacingFt: [350, 700, 1050], taperLengthFt: 420, coneSpacingFt: 27 },
   60: { signSpacingFt: [400, 800, 1200], taperLengthFt: 480, coneSpacingFt: 30 },
   65: { signSpacingFt: [500, 1000, 1500], taperLengthFt: 550, coneSpacingFt: 32 },
+};
+
+/** Road class priority for selecting dominant road */
+const ROAD_CLASS_PRIORITY: Record<string, number> = {
+  "motorway": 10,
+  "trunk": 9,
+  "primary": 8,
+  "secondary": 7,
+  "tertiary": 6,
+  "street": 5,
+  "residential": 4,
+  "service": 3,
+  "path": 1,
+  "default": 2,
 };
 
 // ============================================
@@ -77,9 +95,7 @@ function bearing(p1: Point, p2: Point): number {
 function movePoint(p: Point, distanceM: number, bearingRad: number): Point {
   const distDeg = distanceM * M_TO_DEG;
   const lat1 = p[1] * Math.PI / 180;
-  const lng1 = p[0] * Math.PI / 180;
   
-  // Simplified projection (works well for small distances)
   const dLat = distDeg * Math.cos(bearingRad);
   const dLng = distDeg * Math.sin(bearingRad) / Math.cos(lat1);
   
@@ -97,30 +113,17 @@ function computeCentroid(ring: number[][]): Point {
 }
 
 /**
- * Find the longest edge of a polygon and return its bearing
+ * Compute bounding box of polygon
  */
-function findLongestEdgeBearing(ring: number[][]): { bearing: number; midpoint: Point } {
-  let maxDist = 0;
-  let longestEdge: { p1: Point; p2: Point } = { p1: [0, 0], p2: [0, 0] };
-  
-  for (let i = 0; i < ring.length; i++) {
-    const p1: Point = [ring[i][0], ring[i][1]];
-    const p2: Point = [ring[(i + 1) % ring.length][0], ring[(i + 1) % ring.length][1]];
-    const dist = distanceMeters(p1, p2);
-    
-    if (dist > maxDist) {
-      maxDist = dist;
-      longestEdge = { p1, p2 };
-    }
-  }
-  
-  const edgeBearing = bearing(longestEdge.p1, longestEdge.p2);
-  const midpoint: Point = [
-    (longestEdge.p1[0] + longestEdge.p2[0]) / 2,
-    (longestEdge.p1[1] + longestEdge.p2[1]) / 2,
-  ];
-  
-  return { bearing: edgeBearing, midpoint };
+function computeBbox(ring: number[][]): { minLng: number; minLat: number; maxLng: number; maxLat: number } {
+  const lngs = ring.map(p => p[0]);
+  const lats = ring.map(p => p[1]);
+  return {
+    minLng: Math.min(...lngs),
+    minLat: Math.min(...lats),
+    maxLng: Math.max(...lngs),
+    maxLat: Math.max(...lats),
+  };
 }
 
 /**
@@ -143,6 +146,25 @@ function isPointInPolygon(point: Point, ring: number[][]): boolean {
 }
 
 /**
+ * Find the closest point on a line segment to a given point
+ */
+function closestPointOnSegment(p: Point, a: Point, b: Point): { point: Point; t: number } {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const lenSq = dx * dx + dy * dy;
+  
+  if (lenSq === 0) return { point: a, t: 0 };
+  
+  let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  
+  return {
+    point: [a[0] + t * dx, a[1] + t * dy],
+    t,
+  };
+}
+
+/**
  * Find the closest point on a polygon boundary to a given point
  */
 function closestPointOnPolygon(point: Point, ring: number[][]): Point {
@@ -150,11 +172,10 @@ function closestPointOnPolygon(point: Point, ring: number[][]): Point {
   let closest: Point = point;
   
   for (let i = 0; i < ring.length; i++) {
-    const p1: Point = [ring[i][0], ring[i][1]];
-    const p2: Point = [ring[(i + 1) % ring.length][0], ring[(i + 1) % ring.length][1]];
+    const a: Point = [ring[i][0], ring[i][1]];
+    const b: Point = [ring[(i + 1) % ring.length][0], ring[(i + 1) % ring.length][1]];
     
-    // Project point onto line segment
-    const projected = projectPointOnSegment(point, p1, p2);
+    const { point: projected } = closestPointOnSegment(point, a, b);
     const dist = distanceMeters(point, projected);
     
     if (dist < minDist) {
@@ -164,76 +185,6 @@ function closestPointOnPolygon(point: Point, ring: number[][]): Point {
   }
   
   return closest;
-}
-
-/**
- * Project a point onto a line segment
- */
-function projectPointOnSegment(p: Point, a: Point, b: Point): Point {
-  const dx = b[0] - a[0];
-  const dy = b[1] - a[1];
-  const lenSq = dx * dx + dy * dy;
-  
-  if (lenSq === 0) return a;
-  
-  let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / lenSq;
-  t = Math.max(0, Math.min(1, t));
-  
-  return [a[0] + t * dx, a[1] + t * dy];
-}
-
-/**
- * Find intersection points between a line and polygon
- */
-function linePolygonIntersections(
-  lineStart: Point,
-  lineEnd: Point,
-  ring: number[][]
-): Point[] {
-  const intersections: Point[] = [];
-  
-  for (let i = 0; i < ring.length; i++) {
-    const p1: Point = [ring[i][0], ring[i][1]];
-    const p2: Point = [ring[(i + 1) % ring.length][0], ring[(i + 1) % ring.length][1]];
-    
-    const intersection = lineSegmentIntersection(lineStart, lineEnd, p1, p2);
-    if (intersection) {
-      intersections.push(intersection);
-    }
-  }
-  
-  return intersections;
-}
-
-/**
- * Find intersection point between two line segments
- */
-function lineSegmentIntersection(
-  a1: Point, a2: Point,
-  b1: Point, b2: Point
-): Point | null {
-  const d1x = a2[0] - a1[0];
-  const d1y = a2[1] - a1[1];
-  const d2x = b2[0] - b1[0];
-  const d2y = b2[1] - b1[1];
-  
-  const cross = d1x * d2y - d1y * d2x;
-  if (Math.abs(cross) < 1e-10) return null;
-  
-  const dx = b1[0] - a1[0];
-  const dy = b1[1] - a1[1];
-  
-  const t = (dx * d2y - dy * d2x) / cross;
-  const u = (dx * d1y - dy * d1x) / cross;
-  
-  // Check if intersection is within both segments
-  // For the polygon edge, must be within [0, 1]
-  // For the centerline, we allow extended range since it's a long line
-  if (u >= 0 && u <= 1 && t >= -10 && t <= 10) {
-    return [a1[0] + t * d1x, a1[1] + t * d1y];
-  }
-  
-  return null;
 }
 
 /**
@@ -255,78 +206,313 @@ function distanceToPolygon(point: Point, ring: number[][]): number {
 }
 
 // ============================================
-// WORK ZONE AXIS DERIVATION
+// POLYLINE UTILITIES
 // ============================================
 
-interface WorkZoneAxis {
-  /** Polygon centroid */
+/**
+ * Project a point onto a polyline and return the closest point + segment info
+ */
+function projectPointToPolyline(point: Point, polyline: RoadPolyline): {
+  point: Point;
+  segmentIndex: number;
+  distanceAlongLine: number;
+  distanceFromLine: number;
+} {
+  let minDist = Infinity;
+  let closestPoint: Point = polyline[0];
+  let closestSegment = 0;
+  let distanceAlong = 0;
+  let cumulativeDistance = 0;
+  
+  for (let i = 0; i < polyline.length - 1; i++) {
+    const a = polyline[i];
+    const b = polyline[i + 1];
+    const segmentLength = distanceMeters(a, b);
+    
+    const { point: projected, t } = closestPointOnSegment(point, a, b);
+    const dist = distanceMeters(point, projected);
+    
+    if (dist < minDist) {
+      minDist = dist;
+      closestPoint = projected;
+      closestSegment = i;
+      distanceAlong = cumulativeDistance + t * segmentLength;
+    }
+    
+    cumulativeDistance += segmentLength;
+  }
+  
+  return {
+    point: closestPoint,
+    segmentIndex: closestSegment,
+    distanceAlongLine: distanceAlong,
+    distanceFromLine: minDist,
+  };
+}
+
+/**
+ * Calculate total length of a polyline in meters
+ */
+function polylineLength(polyline: RoadPolyline): number {
+  let length = 0;
+  for (let i = 0; i < polyline.length - 1; i++) {
+    length += distanceMeters(polyline[i], polyline[i + 1]);
+  }
+  return length;
+}
+
+/**
+ * Walk along a polyline by a given distance (meters) from a starting point
+ * Negative distance walks backwards
+ */
+function walkAlongPolyline(
+  polyline: RoadPolyline,
+  startSegmentIndex: number,
+  startDistanceAlong: number,
+  walkDistance: number
+): Point | null {
+  // Calculate cumulative distances to each vertex
+  const distances: number[] = [0];
+  for (let i = 0; i < polyline.length - 1; i++) {
+    distances.push(distances[i] + distanceMeters(polyline[i], polyline[i + 1]));
+  }
+  
+  const targetDistance = startDistanceAlong + walkDistance;
+  
+  // Handle walking off the end
+  if (targetDistance < 0) {
+    // Extend from start
+    const dir = bearing(polyline[1], polyline[0]);
+    return movePoint(polyline[0], -targetDistance, dir);
+  }
+  
+  const totalLength = distances[distances.length - 1];
+  if (targetDistance > totalLength) {
+    // Extend from end
+    const lastIdx = polyline.length - 1;
+    const dir = bearing(polyline[lastIdx - 1], polyline[lastIdx]);
+    return movePoint(polyline[lastIdx], targetDistance - totalLength, dir);
+  }
+  
+  // Find the segment containing the target distance
+  for (let i = 0; i < distances.length - 1; i++) {
+    if (targetDistance >= distances[i] && targetDistance <= distances[i + 1]) {
+      const segmentLength = distances[i + 1] - distances[i];
+      const t = segmentLength > 0 ? (targetDistance - distances[i]) / segmentLength : 0;
+      
+      const a = polyline[i];
+      const b = polyline[i + 1];
+      return [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+    }
+  }
+  
+  return polyline[polyline.length - 1];
+}
+
+/**
+ * Get the bearing at a point along a polyline
+ */
+function bearingAtPolylinePoint(polyline: RoadPolyline, segmentIndex: number): number {
+  const idx = Math.min(segmentIndex, polyline.length - 2);
+  return bearing(polyline[idx], polyline[idx + 1]);
+}
+
+// ============================================
+// ROAD SELECTION
+// ============================================
+
+interface ScoredRoad {
+  polyline: RoadPolyline;
+  score: number;
+  distanceFromCentroid: number;
+  lengthInBbox: number;
+}
+
+/**
+ * Select the dominant road polyline near the work zone
+ */
+function selectDominantRoadPolyline(
+  roads: RoadPolyline[],
+  polygonRing: number[][],
+  centroid: Point
+): RoadPolyline | null {
+  if (!roads || roads.length === 0) return null;
+  
+  const bbox = computeBbox(polygonRing);
+  const bboxPadding = 0.001; // ~100m padding
+  const expandedBbox = {
+    minLng: bbox.minLng - bboxPadding,
+    minLat: bbox.minLat - bboxPadding,
+    maxLng: bbox.maxLng + bboxPadding,
+    maxLat: bbox.maxLat + bboxPadding,
+  };
+  
+  const scoredRoads: ScoredRoad[] = [];
+  
+  for (const road of roads) {
+    if (road.length < 2) continue;
+    
+    // Check if road intersects expanded bbox
+    let intersectsBbox = false;
+    let lengthInBbox = 0;
+    
+    for (let i = 0; i < road.length - 1; i++) {
+      const p1 = road[i];
+      const p2 = road[i + 1];
+      
+      // Simple bbox intersection check
+      const segMinLng = Math.min(p1[0], p2[0]);
+      const segMaxLng = Math.max(p1[0], p2[0]);
+      const segMinLat = Math.min(p1[1], p2[1]);
+      const segMaxLat = Math.max(p1[1], p2[1]);
+      
+      if (segMaxLng >= expandedBbox.minLng && segMinLng <= expandedBbox.maxLng &&
+          segMaxLat >= expandedBbox.minLat && segMinLat <= expandedBbox.maxLat) {
+        intersectsBbox = true;
+        lengthInBbox += distanceMeters(p1, p2);
+      }
+    }
+    
+    if (!intersectsBbox) continue;
+    
+    // Calculate distance from centroid to road
+    const { distanceFromLine } = projectPointToPolyline(centroid, road);
+    
+    // Score: prefer closer roads with more length in bbox
+    // Lower distance = better, higher length = better
+    const distanceScore = Math.max(0, 500 - distanceFromLine) / 500; // 0-1, 1 is best
+    const lengthScore = Math.min(lengthInBbox / 200, 1); // 0-1, cap at 200m
+    const score = distanceScore * 0.7 + lengthScore * 0.3;
+    
+    if (score > 0) {
+      scoredRoads.push({
+        polyline: road,
+        score,
+        distanceFromCentroid: distanceFromLine,
+        lengthInBbox,
+      });
+    }
+  }
+  
+  if (scoredRoads.length === 0) return null;
+  
+  // Sort by score descending
+  scoredRoads.sort((a, b) => b.score - a.score);
+  
+  return scoredRoads[0].polyline;
+}
+
+// ============================================
+// FALLBACK: POLYGON AXIS DERIVATION
+// ============================================
+
+/**
+ * Find the longest edge of a polygon and return its bearing
+ */
+function findLongestEdgeBearing(ring: number[][]): { bearing: number; midpoint: Point } {
+  let maxDist = 0;
+  let longestEdge: { p1: Point; p2: Point } = { p1: [0, 0], p2: [0, 0] };
+  
+  for (let i = 0; i < ring.length; i++) {
+    const p1: Point = [ring[i][0], ring[i][1]];
+    const p2: Point = [ring[(i + 1) % ring.length][0], ring[(i + 1) % ring.length][1]];
+    const dist = distanceMeters(p1, p2);
+    
+    if (dist > maxDist) {
+      maxDist = dist;
+      longestEdge = { p1, p2 };
+    }
+  }
+  
+  return {
+    bearing: bearing(longestEdge.p1, longestEdge.p2),
+    midpoint: [(longestEdge.p1[0] + longestEdge.p2[0]) / 2, (longestEdge.p1[1] + longestEdge.p2[1]) / 2],
+  };
+}
+
+/**
+ * Find intersection points between a line and polygon
+ */
+function linePolygonIntersections(lineStart: Point, lineEnd: Point, ring: number[][]): Point[] {
+  const intersections: Point[] = [];
+  
+  for (let i = 0; i < ring.length; i++) {
+    const p1: Point = [ring[i][0], ring[i][1]];
+    const p2: Point = [ring[(i + 1) % ring.length][0], ring[(i + 1) % ring.length][1]];
+    
+    const intersection = lineSegmentIntersection(lineStart, lineEnd, p1, p2);
+    if (intersection) {
+      intersections.push(intersection);
+    }
+  }
+  
+  return intersections;
+}
+
+function lineSegmentIntersection(a1: Point, a2: Point, b1: Point, b2: Point): Point | null {
+  const d1x = a2[0] - a1[0];
+  const d1y = a2[1] - a1[1];
+  const d2x = b2[0] - b1[0];
+  const d2y = b2[1] - b1[1];
+  
+  const cross = d1x * d2y - d1y * d2x;
+  if (Math.abs(cross) < 1e-10) return null;
+  
+  const dx = b1[0] - a1[0];
+  const dy = b1[1] - a1[1];
+  
+  const t = (dx * d2y - dy * d2x) / cross;
+  const u = (dx * d1y - dy * d1x) / cross;
+  
+  if (u >= 0 && u <= 1 && t >= -10 && t <= 10) {
+    return [a1[0] + t * d1x, a1[1] + t * d1y];
+  }
+  
+  return null;
+}
+
+interface FallbackAxis {
   centroid: Point;
-  /** Primary axis bearing (radians) */
   axisBearing: number;
-  /** Entry point where axis enters polygon (upstream) */
   entryPoint: Point;
-  /** Exit point where axis exits polygon (downstream) */
   exitPoint: Point;
-  /** Upstream direction bearing (traffic comes from this direction) */
   upstreamBearing: number;
 }
 
 /**
- * Derive the work zone axis from polygon geometry
+ * Derive work zone axis from polygon geometry (fallback method)
  */
-function deriveWorkZoneAxis(ring: number[][], trafficDirection: "forward" | "reverse" = "forward"): WorkZoneAxis {
+function deriveFallbackAxis(ring: number[][]): FallbackAxis {
   const centroid = computeCentroid(ring);
   const { bearing: edgeBearing } = findLongestEdgeBearing(ring);
   
-  // Create a long virtual centerline through the centroid
-  const extendDist = 500; // meters
+  const extendDist = 500;
   const lineStart = movePoint(centroid, extendDist, edgeBearing + Math.PI);
   const lineEnd = movePoint(centroid, extendDist, edgeBearing);
   
-  // Find intersections with polygon
   const intersections = linePolygonIntersections(lineStart, lineEnd, ring);
   
   let entryPoint: Point;
   let exitPoint: Point;
   
   if (intersections.length >= 2) {
-    // Sort by distance from lineStart
-    intersections.sort((a, b) => 
-      distanceMeters(lineStart, a) - distanceMeters(lineStart, b)
-    );
-    
-    if (trafficDirection === "forward") {
-      entryPoint = intersections[0];
-      exitPoint = intersections[intersections.length - 1];
-    } else {
-      entryPoint = intersections[intersections.length - 1];
-      exitPoint = intersections[0];
-    }
+    intersections.sort((a, b) => distanceMeters(lineStart, a) - distanceMeters(lineStart, b));
+    entryPoint = intersections[0];
+    exitPoint = intersections[intersections.length - 1];
   } else {
-    // Fallback: use closest polygon points
     entryPoint = closestPointOnPolygon(lineStart, ring);
     exitPoint = closestPointOnPolygon(lineEnd, ring);
   }
   
-  // Upstream bearing points AWAY from polygon (direction traffic comes from)
   const upstreamBearing = bearing(entryPoint, lineStart);
   
-  return {
-    centroid,
-    axisBearing: edgeBearing,
-    entryPoint,
-    exitPoint,
-    upstreamBearing,
-  };
+  return { centroid, axisBearing: edgeBearing, entryPoint, exitPoint, upstreamBearing };
 }
 
 // ============================================
 // DEVICE PLACEMENT
 // ============================================
 
-/**
- * Get speed configuration, interpolating if needed
- */
 function getSpeedConfig(speedMph: number): { signSpacingFt: number[]; taperLengthFt: number; coneSpacingFt: number } {
   const clamped = Math.max(25, Math.min(65, speedMph));
   const rounded = Math.round(clamped / 5) * 5;
@@ -334,11 +520,104 @@ function getSpeedConfig(speedMph: number): { signSpacingFt: number[]; taperLengt
 }
 
 /**
- * Place signs upstream of entry point along the axis
+ * Check if a device position is too close to existing devices
  */
-function placeSigns(
-  axis: WorkZoneAxis,
-  ring: number[][],
+function isTooCloseToExisting(pos: Point, existingDevices: FieldDevice[], minSpacing: number): boolean {
+  for (const device of existingDevices) {
+    if (distanceMeters(pos, device.lngLat) < minSpacing) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Place signs along a road polyline (street-aware method)
+ */
+function placeSignsAlongRoad(
+  road: RoadPolyline,
+  polygonRing: number[][],
+  centroid: Point,
+  config: { signSpacingFt: number[] }
+): FieldDevice[] {
+  const devices: FieldDevice[] = [];
+  
+  // Project centroid to road to find entry point
+  const projection = projectPointToPolyline(centroid, road);
+  
+  // Determine which direction is "upstream" (away from polygon center)
+  // Try both directions and pick the one that leads outside the polygon faster
+  const testDist = 50; // meters
+  const testPoint1 = walkAlongPolyline(road, projection.segmentIndex, projection.distanceAlongLine, -testDist);
+  const testPoint2 = walkAlongPolyline(road, projection.segmentIndex, projection.distanceAlongLine, testDist);
+  
+  // Pick direction that goes outside polygon
+  let upstreamDirection = -1; // negative = walk backwards along polyline
+  if (testPoint1 && testPoint2) {
+    const dist1ToPolygon = distanceToPolygon(testPoint1, polygonRing);
+    const dist2ToPolygon = distanceToPolygon(testPoint2, polygonRing);
+    upstreamDirection = dist1ToPolygon > dist2ToPolygon ? -1 : 1;
+  }
+  
+  // Place signs upstream
+  for (let i = 0; i < config.signSpacingFt.length && i < 3; i++) {
+    const distFt = config.signSpacingFt[i];
+    const distM = distFt * FT_TO_M;
+    
+    let signPos = walkAlongPolyline(
+      road,
+      projection.segmentIndex,
+      projection.distanceAlongLine,
+      upstreamDirection * distM
+    );
+    
+    if (!signPos) continue;
+    
+    // Validation: sign must be OUTSIDE polygon
+    let attempts = 0;
+    while (isPointInPolygon(signPos, polygonRing) && attempts < 10) {
+      attempts++;
+      signPos = walkAlongPolyline(
+        road,
+        projection.segmentIndex,
+        projection.distanceAlongLine,
+        upstreamDirection * (distM + attempts * 20)
+      );
+      if (!signPos) break;
+    }
+    
+    if (!signPos) continue;
+    
+    // Anti-stacking check
+    if (isTooCloseToExisting(signPos, devices, MIN_DEVICE_SPACING_M)) {
+      // Push further upstream
+      signPos = walkAlongPolyline(
+        road,
+        projection.segmentIndex,
+        projection.distanceAlongLine,
+        upstreamDirection * (distM + 15)
+      );
+      if (!signPos) continue;
+    }
+    
+    devices.push({
+      id: generateDeviceId(),
+      type: "sign",
+      lngLat: signPos,
+      label: SIGN_LABELS[i],
+      meta: { sequence: i + 1, purpose: "advance_warning", distanceFt: distFt, method: "road_aligned" },
+    });
+  }
+  
+  return devices;
+}
+
+/**
+ * Place signs using fallback axis method
+ */
+function placeSignsFallback(
+  axis: FallbackAxis,
+  polygonRing: number[][],
   config: { signSpacingFt: number[] }
 ): FieldDevice[] {
   const devices: FieldDevice[] = [];
@@ -347,31 +626,26 @@ function placeSigns(
     const distFt = config.signSpacingFt[i];
     const distM = distFt * FT_TO_M;
     
-    // Place sign upstream of entry point
     let signPos = movePoint(axis.entryPoint, distM, axis.upstreamBearing);
     
     // Validation: sign must be OUTSIDE polygon
-    if (isPointInPolygon(signPos, ring)) {
-      // Move further upstream until outside
-      for (let j = 1; j <= 5; j++) {
-        signPos = movePoint(axis.entryPoint, distM + j * 20, axis.upstreamBearing);
-        if (!isPointInPolygon(signPos, ring)) break;
-      }
+    let attempts = 0;
+    while (isPointInPolygon(signPos, polygonRing) && attempts < 5) {
+      attempts++;
+      signPos = movePoint(axis.entryPoint, distM + attempts * 20, axis.upstreamBearing);
     }
     
-    // Validation: sign should be within 15m of centerline (it should be on centerline by construction)
-    // This is already satisfied since we're moving along the axis
+    // Anti-stacking check
+    if (isTooCloseToExisting(signPos, devices, MIN_DEVICE_SPACING_M)) {
+      signPos = movePoint(axis.entryPoint, distM + 15, axis.upstreamBearing);
+    }
     
     devices.push({
       id: generateDeviceId(),
       type: "sign",
       lngLat: signPos,
       label: SIGN_LABELS[i],
-      meta: {
-        sequence: i + 1,
-        purpose: "advance_warning",
-        distanceFt: distFt,
-      },
+      meta: { sequence: i + 1, purpose: "advance_warning", distanceFt: distFt, method: "axis_fallback" },
     });
   }
   
@@ -379,24 +653,36 @@ function placeSigns(
 }
 
 /**
- * Place cones as a taper from entry point into the polygon
+ * Place cones along polygon boundary (closure edge)
  */
-function placeCones(
-  axis: WorkZoneAxis,
-  ring: number[][],
-  config: { taperLengthFt: number; coneSpacingFt: number }
+function placeConesAlongBoundary(
+  polygonRing: number[][],
+  entryPoint: Point,
+  centroid: Point,
+  config: { taperLengthFt: number; coneSpacingFt: number },
+  existingDevices: FieldDevice[]
 ): FieldDevice[] {
   const devices: FieldDevice[] = [];
   
   const taperLengthM = config.taperLengthFt * FT_TO_M;
   const coneSpacingM = config.coneSpacingFt * FT_TO_M;
   
-  // Taper direction: from entry point toward centroid (into polygon)
-  const taperBearing = bearing(axis.entryPoint, axis.centroid);
+  // Find the polygon edge segment closest to the entry point
+  let closestEdgeStart = 0;
+  let minDist = Infinity;
   
-  // Perpendicular offset for creating a taper line (alternating sides)
+  for (let i = 0; i < polygonRing.length; i++) {
+    const p: Point = [polygonRing[i][0], polygonRing[i][1]];
+    const dist = distanceMeters(entryPoint, p);
+    if (dist < minDist) {
+      minDist = dist;
+      closestEdgeStart = i;
+    }
+  }
+  
+  // Direction from entry point toward centroid (into polygon)
+  const taperBearing = bearing(entryPoint, centroid);
   const perpBearing = taperBearing + Math.PI / 2;
-  const perpOffset = 2; // meters, alternating left/right
   
   const numCones = Math.max(4, Math.floor(taperLengthM / coneSpacingM));
   
@@ -404,31 +690,35 @@ function placeCones(
     const distAlongTaper = i * coneSpacingM;
     
     // Base position along taper line
-    let conePos = movePoint(axis.entryPoint, distAlongTaper, taperBearing);
+    let conePos = movePoint(entryPoint, distAlongTaper, taperBearing);
     
-    // Add perpendicular offset for taper angle
-    // Offset increases as we move into the polygon (creates taper shape)
-    const taperOffset = (i / numCones) * 3; // max 3m lateral shift
-    const sideMultiplier = i % 2 === 0 ? 1 : -1; // alternate sides for visual effect
-    conePos = movePoint(conePos, taperOffset + sideMultiplier * perpOffset * 0.5, perpBearing);
+    // Add perpendicular offset for taper angle (creates diagonal line)
+    const taperOffset = (i / numCones) * 4; // max 4m lateral shift
+    const sideMultiplier = i % 2 === 0 ? 1 : 0.5; // slight alternation
+    conePos = movePoint(conePos, taperOffset * sideMultiplier, perpBearing);
     
     // Validation: cone should be INSIDE polygon or within 5m of boundary
-    const distToPoly = distanceToPolygon(conePos, ring);
-    const isInside = isPointInPolygon(conePos, ring);
+    const distToPoly = distanceToPolygon(conePos, polygonRing);
+    const isInside = isPointInPolygon(conePos, polygonRing);
     
     if (!isInside && distToPoly > 5) {
-      // Clamp to polygon boundary
-      conePos = clampToPolygon(conePos, ring);
+      conePos = clampToPolygon(conePos, polygonRing);
+    }
+    
+    // Anti-stacking check
+    if (isTooCloseToExisting(conePos, [...existingDevices, ...devices], MIN_DEVICE_SPACING_M)) {
+      // Try offset position
+      conePos = movePoint(conePos, MIN_DEVICE_SPACING_M, perpBearing);
+      if (!isPointInPolygon(conePos, polygonRing)) {
+        conePos = clampToPolygon(conePos, polygonRing);
+      }
     }
     
     devices.push({
       id: generateDeviceId(),
       type: "cone",
       lngLat: conePos,
-      meta: {
-        sequence: i + 1,
-        purpose: "taper",
-      },
+      meta: { sequence: i + 1, purpose: "taper" },
     });
   }
   
@@ -436,13 +726,12 @@ function placeCones(
 }
 
 /**
- * Place flaggers at entry and exit points (for applicable work types)
+ * Place flaggers at entry and exit points
  */
-function placeFlaggers(axis: WorkZoneAxis): FieldDevice[] {
+function placeFlaggers(entryPoint: Point, exitPoint: Point, upstreamBearing: number): FieldDevice[] {
   const devices: FieldDevice[] = [];
   
-  // Flagger 1: upstream of entry point
-  const flagger1Pos = movePoint(axis.entryPoint, 15, axis.upstreamBearing);
+  const flagger1Pos = movePoint(entryPoint, 15, upstreamBearing);
   devices.push({
     id: generateDeviceId(),
     type: "flagger",
@@ -451,9 +740,8 @@ function placeFlaggers(axis: WorkZoneAxis): FieldDevice[] {
     meta: { purpose: "traffic_control", position: "upstream" },
   });
   
-  // Flagger 2: downstream of exit point
-  const downstreamBearing = axis.upstreamBearing + Math.PI;
-  const flagger2Pos = movePoint(axis.exitPoint, 15, downstreamBearing);
+  const downstreamBearing = upstreamBearing + Math.PI;
+  const flagger2Pos = movePoint(exitPoint, 15, downstreamBearing);
   devices.push({
     id: generateDeviceId(),
     type: "flagger",
@@ -466,19 +754,16 @@ function placeFlaggers(axis: WorkZoneAxis): FieldDevice[] {
 }
 
 /**
- * Place arrow board near entry point (for lane closures at higher speeds)
+ * Place arrow board near entry point
  */
-function placeArrowBoard(axis: WorkZoneAxis, ring: number[][]): FieldDevice[] {
-  // Arrow board position: just upstream of entry point
-  let arrowPos = movePoint(axis.entryPoint, 30, axis.upstreamBearing);
+function placeArrowBoard(entryPoint: Point, upstreamBearing: number, polygonRing: number[][]): FieldDevice[] {
+  let arrowPos = movePoint(entryPoint, 30, upstreamBearing);
   
-  // Ensure outside polygon
-  if (isPointInPolygon(arrowPos, ring)) {
-    arrowPos = movePoint(axis.entryPoint, 50, axis.upstreamBearing);
+  if (isPointInPolygon(arrowPos, polygonRing)) {
+    arrowPos = movePoint(entryPoint, 50, upstreamBearing);
   }
   
-  // Convert bearing to rotation degrees (0 = north, clockwise)
-  const rotationDeg = ((axis.upstreamBearing + Math.PI) * 180 / Math.PI + 360) % 360;
+  const rotationDeg = ((upstreamBearing + Math.PI) * 180 / Math.PI + 360) % 360;
   
   return [{
     id: generateDeviceId(),
@@ -497,11 +782,11 @@ function placeArrowBoard(axis: WorkZoneAxis, ring: number[][]): FieldDevice[] {
 /**
  * Generate a suggested field layout for a work zone
  * 
- * Street-aware algorithm:
- * 1. Derive work zone axis from polygon geometry
- * 2. Place signs upstream along the axis (outside polygon)
- * 3. Place cones as a taper from entry point (inside polygon)
- * 4. Validate all placements
+ * Phase 2 Algorithm:
+ * 1. If roadCenterlines provided, select dominant road near polygon
+ * 2. Place signs along road (street-aware) or fallback axis
+ * 3. Place cones as boundary-aligned taper (no stacking)
+ * 4. Validate all placements (inside/outside rules, anti-stacking)
  */
 export function suggestFieldLayout(input: LayoutSuggestionInput): FieldLayout {
   const {
@@ -511,39 +796,85 @@ export function suggestFieldLayout(input: LayoutSuggestionInput): FieldLayout {
     postedSpeedMph,
     workType,
     workLengthFt,
+    roadCenterlines,
   } = input;
   
   const now = new Date().toISOString();
   const devices: FieldDevice[] = [];
-  
-  // Get speed-based configuration
   const config = getSpeedConfig(postedSpeedMph);
+  const centroid: Point = [inputCentroid.lng, inputCentroid.lat];
   
-  // Derive work zone axis from polygon geometry
-  const axis = deriveWorkZoneAxis(polygonRing);
+  // Try to select dominant road
+  const dominantRoad = selectDominantRoadPolyline(roadCenterlines || [], polygonRing, centroid);
   
-  // Place signs (always)
-  const signs = placeSigns(axis, polygonRing, config);
-  devices.push(...signs);
+  let entryPoint: Point;
+  let exitPoint: Point;
+  let upstreamBearing: number;
+  let usedMethod: "road_aligned" | "axis_fallback";
   
-  // Place cones (always)
-  const cones = placeCones(axis, polygonRing, config);
+  if (dominantRoad) {
+    // STREET-AWARE: Use road polyline
+    usedMethod = "road_aligned";
+    
+    // Project centroid to road
+    const projection = projectPointToPolyline(centroid, dominantRoad);
+    entryPoint = closestPointOnPolygon(projection.point, polygonRing);
+    
+    // Determine upstream direction
+    const testDist = 50;
+    const testPoint1 = walkAlongPolyline(dominantRoad, projection.segmentIndex, projection.distanceAlongLine, -testDist);
+    const testPoint2 = walkAlongPolyline(dominantRoad, projection.segmentIndex, projection.distanceAlongLine, testDist);
+    
+    if (testPoint1 && testPoint2) {
+      const dist1 = distanceToPolygon(testPoint1, polygonRing);
+      const dist2 = distanceToPolygon(testPoint2, polygonRing);
+      const upstreamPoint = dist1 > dist2 ? testPoint1 : testPoint2;
+      upstreamBearing = bearing(entryPoint, upstreamPoint);
+      
+      // Exit point is opposite direction
+      const downstreamPoint = dist1 > dist2 ? testPoint2 : testPoint1;
+      exitPoint = closestPointOnPolygon(downstreamPoint, polygonRing);
+    } else {
+      // Fallback within road method
+      upstreamBearing = bearingAtPolylinePoint(dominantRoad, projection.segmentIndex);
+      exitPoint = closestPointOnPolygon(movePoint(entryPoint, 100, upstreamBearing + Math.PI), polygonRing);
+    }
+    
+    // Place signs along road
+    const signs = placeSignsAlongRoad(dominantRoad, polygonRing, centroid, config);
+    devices.push(...signs);
+  } else {
+    // FALLBACK: Use polygon axis
+    usedMethod = "axis_fallback";
+    
+    const axis = deriveFallbackAxis(polygonRing);
+    entryPoint = axis.entryPoint;
+    exitPoint = axis.exitPoint;
+    upstreamBearing = axis.upstreamBearing;
+    
+    // Place signs using fallback
+    const signs = placeSignsFallback(axis, polygonRing, config);
+    devices.push(...signs);
+  }
+  
+  // Place cones (same method for both)
+  const cones = placeConesAlongBoundary(polygonRing, entryPoint, centroid, config, devices);
   devices.push(...cones);
   
   // Place flaggers (for specific work types)
   if (workType === "one_lane_two_way_flaggers") {
-    const flaggers = placeFlaggers(axis);
+    const flaggers = placeFlaggers(entryPoint, exitPoint, upstreamBearing);
     devices.push(...flaggers);
   }
   
   // Place arrow board (for lane closures at higher speeds)
   if (workType === "lane_closure" && postedSpeedMph >= 45) {
-    const arrowBoards = placeArrowBoard(axis, polygonRing);
+    const arrowBoards = placeArrowBoard(entryPoint, upstreamBearing, polygonRing);
     devices.push(...arrowBoards);
   }
   
-  // Determine approach direction from axis bearing
-  const bearingDeg = (axis.upstreamBearing * 180 / Math.PI + 360) % 360;
+  // Determine approach direction
+  const bearingDeg = (upstreamBearing * 180 / Math.PI + 360) % 360;
   let direction: ApproachDirection;
   if (bearingDeg >= 315 || bearingDeg < 45) direction = "N";
   else if (bearingDeg >= 45 && bearingDeg < 135) direction = "E";
@@ -569,4 +900,31 @@ export function countDevicesByType(layout: FieldLayout): Record<string, number> 
     counts[device.type] = (counts[device.type] || 0) + 1;
   }
   return counts;
+}
+
+/**
+ * Normalize GeoJSON features from queryRenderedFeatures into polylines
+ */
+export function normalizeRoadFeatures(features: GeoJSON.Feature[]): RoadPolyline[] {
+  const polylines: RoadPolyline[] = [];
+  
+  for (const feature of features) {
+    if (!feature.geometry) continue;
+    
+    if (feature.geometry.type === "LineString") {
+      const coords = feature.geometry.coordinates as [number, number][];
+      if (coords.length >= 2) {
+        polylines.push(coords);
+      }
+    } else if (feature.geometry.type === "MultiLineString") {
+      const multiCoords = feature.geometry.coordinates as [number, number][][];
+      for (const coords of multiCoords) {
+        if (coords.length >= 2) {
+          polylines.push(coords);
+        }
+      }
+    }
+  }
+  
+  return polylines;
 }

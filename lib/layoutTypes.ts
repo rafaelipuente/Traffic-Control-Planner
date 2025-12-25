@@ -53,6 +53,11 @@ export interface FieldLayout {
 }
 
 /**
+ * A road centerline polyline extracted from map data
+ */
+export type RoadPolyline = Array<[number, number]>; // Array of [lng, lat]
+
+/**
  * Input parameters for generating a suggested layout
  */
 export interface LayoutSuggestionInput {
@@ -68,6 +73,11 @@ export interface LayoutSuggestionInput {
   workType: "shoulder_work" | "lane_closure" | "one_lane_two_way_flaggers";
   /** Length of work zone in feet */
   workLengthFt: number;
+  /** 
+   * Optional: Road centerlines extracted from map via queryRenderedFeatures.
+   * If provided, layout will align to actual streets.
+   */
+  roadCenterlines?: RoadPolyline[];
 }
 
 /**

@@ -12,7 +12,7 @@ import {
   DiagramJobData,
   DiagramPlanData,
 } from "@/lib/diagram/types";
-import { FieldLayout } from "@/lib/layoutTypes";
+import { FieldLayout, RoadPolyline } from "@/lib/layoutTypes";
 
 // Dynamic import for FieldLayoutPanel to avoid SSR issues with Mapbox
 const FieldLayoutPanel = dynamic(() => import("./FieldLayoutPanel"), {
@@ -93,6 +93,8 @@ export interface OutputPanelProps {
   isLayoutLocked?: boolean;
   /** Callback to lock/unlock layout */
   onLayoutLockChange?: (locked: boolean) => void;
+  /** Callback when road features are extracted from map */
+  onRoadFeaturesExtracted?: (roads: RoadPolyline[]) => void;
 }
 
 export default function OutputPanel({
@@ -113,6 +115,7 @@ export default function OutputPanel({
   onFieldLayoutChange,
   isLayoutLocked = false,
   onLayoutLockChange,
+  onRoadFeaturesExtracted,
 }: OutputPanelProps) {
   const [isExporting, setIsExporting] = useState(false);
   const [showCoverageDetails, setShowCoverageDetails] = useState(false);
@@ -523,6 +526,7 @@ export default function OutputPanel({
                   geometry={geometry}
                   diagramJob={diagramJob}
                   diagramPlan={null}
+                  onRoadFeaturesExtracted={onRoadFeaturesExtracted}
                   hasGeneratedPlan={false}
                 />
               </InView>
@@ -781,6 +785,7 @@ export default function OutputPanel({
                       geometry={geometry}
                       diagramJob={diagramJob}
                       diagramPlan={diagramPlan}
+                      onRoadFeaturesExtracted={onRoadFeaturesExtracted}
                       hasGeneratedPlan={true}
                     />
                   </InView>
