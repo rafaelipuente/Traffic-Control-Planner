@@ -253,6 +253,12 @@ export default function PlannerPage() {
     const request = buildRequest();
     if (!request) return;
 
+    // Capture whether this is a regenerate (had previous response) for toast message
+    const isRegenerate = response !== null;
+    // Capture previous values for diff comparison (optional enhancement)
+    const prevTaper = response?.plan?.taperLengthFt;
+    const prevBuffer = response?.plan?.bufferLengthFt;
+
     // Abort any existing in-flight request before starting a new one
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -345,8 +351,33 @@ export default function PlannerPage() {
         // Store the signature that was used to generate this plan
         setLastGeneratedSignature(buildPlanSignature(jobDetails));
         
-        // Show success toast with appropriate message
-        setToastMessage("Plan Refined: AI updated spacing and taper based on MUTCD Table 6C-2.");
+        // Build toast message based on Generate vs Regenerate
+        let toastMsg: string;
+        if (!isRegenerate) {
+          // First-time Generate
+          toastMsg = "✓ Plan generated and verified using MUTCD guidance.";
+        } else {
+          // Regenerate - check for diffs
+          const newTaper = data.plan?.taperLengthFt;
+          const newBuffer = data.plan?.bufferLengthFt;
+          
+          // Build diff summary if values changed
+          const diffs: string[] = [];
+          if (prevTaper !== undefined && newTaper !== undefined && prevTaper !== newTaper) {
+            diffs.push(`Taper: ${prevTaper} → ${newTaper} ft`);
+          }
+          if (prevBuffer !== undefined && newBuffer !== undefined && prevBuffer !== newBuffer) {
+            diffs.push(`Buffer: ${prevBuffer} → ${newBuffer} ft`);
+          }
+          
+          if (diffs.length > 0) {
+            toastMsg = `✓ Plan updated: ${diffs.join(", ")}`;
+          } else {
+            toastMsg = "✓ Verified — no changes needed.";
+          }
+        }
+        
+        setToastMessage(toastMsg);
         setShowToast(true);
       }
     } catch (err) {
@@ -372,7 +403,7 @@ export default function PlannerPage() {
         abortControllerRef.current = null;
       }
     }
-  }, [buildRequest, jobDetails]);
+  }, [buildRequest, jobDetails, response]);
 
   const handleRegenerate = useCallback(() => {
     handleGenerate();
