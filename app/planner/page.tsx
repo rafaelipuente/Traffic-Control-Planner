@@ -15,6 +15,8 @@ import {
   getPolygonRing,
 } from "@/lib/workZoneSnapshot";
 import { WorkZoneSnapshotData } from "@/components/OutputPanel";
+import { FieldLayout } from "@/lib/layoutTypes";
+import { suggestFieldLayout } from "@/lib/layout/suggestFieldLayout";
 
 /**
  * Build a stable signature string from job inputs that affect plan calculations.
@@ -73,6 +75,11 @@ export default function PlannerPage() {
 
   // Plan signature tracking for dirty state detection
   const [lastGeneratedSignature, setLastGeneratedSignature] = useState<string>("");
+
+  // Field layout state for Map Mockup
+  const [fieldLayout, setFieldLayout] = useState<FieldLayout | null>(null);
+  const [isLayoutLocked, setIsLayoutLocked] = useState<boolean>(false);
+  const [isLayoutDirty, setIsLayoutDirty] = useState<boolean>(false);
 
   // Progress state
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
@@ -195,6 +202,10 @@ export default function PlannerPage() {
       setError(null);
       setErrorDetails(null);
       setLastGeneratedSignature(""); // Clear signature on reset
+      // Clear field layout state
+      setFieldLayout(null);
+      setIsLayoutLocked(false);
+      setIsLayoutDirty(false);
       // Reset progress state in case of interrupted generation
       setElapsedSeconds(0);
       setProgressStep(0);
@@ -241,6 +252,50 @@ export default function PlannerPage() {
       locationLabel: locationLabel || undefined,
     };
   }, [geometry, mapToken, locationLabel]);
+
+  // Generate initial field layout when geometry changes
+  useEffect(() => {
+    if (!geometry || !workZoneSnapshot || fieldLayout !== null) return;
+    
+    // Get polygon ring for layout suggestion
+    const ring = getPolygonRing(geometry);
+    if (!ring || ring.length < 3) return;
+
+    // Use current job details or defaults for layout suggestion
+    const layoutInput = {
+      polygonRing: ring,
+      centroid: workZoneSnapshot.centroid,
+      roadType: (jobDetails?.roadType ?? "2_lane_undivided") as "2_lane_undivided" | "multilane_divided" | "intersection",
+      postedSpeedMph: jobDetails?.postedSpeedMph ?? 35,
+      workType: (jobDetails?.workType ?? "lane_closure") as "shoulder_work" | "lane_closure" | "one_lane_two_way_flaggers",
+      workLengthFt: jobDetails?.workLengthFt ?? 100,
+    };
+
+    const suggestedLayout = suggestFieldLayout(layoutInput);
+    setFieldLayout(suggestedLayout);
+    setIsLayoutLocked(false);
+    setIsLayoutDirty(false);
+  }, [geometry, workZoneSnapshot, fieldLayout, jobDetails]);
+
+  // Handle field layout changes from user edits
+  const handleFieldLayoutChange = useCallback((layout: FieldLayout) => {
+    setFieldLayout(layout);
+    setIsLayoutDirty(true);
+    // Auto-unlock on edit
+    if (isLayoutLocked) {
+      setIsLayoutLocked(false);
+    }
+  }, [isLayoutLocked]);
+
+  // Handle layout lock/unlock
+  const handleLayoutLockChange = useCallback((locked: boolean) => {
+    setIsLayoutLocked(locked);
+    if (locked) {
+      // Show toast when layout is confirmed
+      setToastMessage("Field layout confirmed.");
+      setShowToast(true);
+    }
+  }, []);
 
   const buildRequest = useCallback(() => {
     if (!geometry || !jobDetails) return null;
@@ -624,6 +679,10 @@ export default function PlannerPage() {
                       : null
                   }
                   workZoneSnapshot={workZoneSnapshot}
+                  fieldLayout={fieldLayout}
+                  onFieldLayoutChange={handleFieldLayoutChange}
+                  isLayoutLocked={isLayoutLocked}
+                  onLayoutLockChange={handleLayoutLockChange}
                 />
               )}
             </div>

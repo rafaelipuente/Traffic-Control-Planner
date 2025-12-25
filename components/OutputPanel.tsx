@@ -12,12 +12,13 @@ import {
   DiagramJobData,
   DiagramPlanData,
 } from "@/lib/diagram/types";
+import { FieldLayout } from "@/lib/layoutTypes";
 
-// Dynamic import for WorkZoneSnapshotMap to avoid SSR issues with Mapbox
-const WorkZoneSnapshotMap = dynamic(() => import("./WorkZoneSnapshotMap"), {
+// Dynamic import for FieldLayoutPanel to avoid SSR issues with Mapbox
+const FieldLayoutPanel = dynamic(() => import("./FieldLayoutPanel"), {
   ssr: false,
   loading: () => (
-    <div className="w-full h-[220px] bg-slate-100 animate-pulse rounded-sm flex items-center justify-center">
+    <div className="w-full h-[350px] bg-slate-100 animate-pulse rounded-sm flex items-center justify-center">
       <span className="text-xs text-slate-400">Loading map…</span>
     </div>
   ),
@@ -84,6 +85,14 @@ export interface OutputPanelProps {
   geometry?: DiagramGeometry | null;
   /** Work zone snapshot for instant visual feedback */
   workZoneSnapshot?: WorkZoneSnapshotData | null;
+  /** Field layout for map mockup */
+  fieldLayout?: FieldLayout | null;
+  /** Callback when field layout changes */
+  onFieldLayoutChange?: (layout: FieldLayout) => void;
+  /** Whether field layout is locked (confirmed) */
+  isLayoutLocked?: boolean;
+  /** Callback to lock/unlock layout */
+  onLayoutLockChange?: (locked: boolean) => void;
 }
 
 export default function OutputPanel({
@@ -100,6 +109,10 @@ export default function OutputPanel({
   jobInfo,
   geometry,
   workZoneSnapshot,
+  fieldLayout,
+  onFieldLayoutChange,
+  isLayoutLocked = false,
+  onLayoutLockChange,
 }: OutputPanelProps) {
   const [isExporting, setIsExporting] = useState(false);
   const [showCoverageDetails, setShowCoverageDetails] = useState(false);
@@ -494,49 +507,26 @@ export default function OutputPanel({
               STATE 1: PREVIEW (Geometry exists, no AI plan yet)
               ===================================== */}
           <div className="flex flex-col gap-6">
-            {/* Work Zone Snapshot Card - Real embedded map with street context */}
+            {/* Field Layout Panel - Map Mockup with device overlay + Schematic tab */}
             {workZoneSnapshot && (
               <InView variants="fadeUp" delay={0}>
-                <div className="bg-white border border-slate-200 rounded-sm shadow-sm overflow-hidden">
-                  <div className="px-3 py-2 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-[#FFB300]"></div>
-                      <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wide">
-                        Work Zone Snapshot
-                      </h3>
-                    </div>
-                    <span className="text-[10px] font-mono text-slate-400">MAP-PREVIEW</span>
-                  </div>
-                  
-                  {/* Embedded Mapbox Mini-Map */}
-                  <WorkZoneSnapshotMap
-                    mapToken={workZoneSnapshot.mapToken}
-                    polygonRing={workZoneSnapshot.polygonRing}
-                    height={220}
-                    locationLabel={workZoneSnapshot.locationLabel}
-                    centroid={workZoneSnapshot.centroid}
-                    vertexCount={workZoneSnapshot.vertexCount}
-                  />
-                </div>
+                <FieldLayoutPanel
+                  mapToken={workZoneSnapshot.mapToken}
+                  polygonRing={workZoneSnapshot.polygonRing}
+                  centroid={workZoneSnapshot.centroid}
+                  layout={fieldLayout ?? null}
+                  onLayoutChange={onFieldLayoutChange ?? (() => {})}
+                  isLocked={isLayoutLocked}
+                  onLockChange={onLayoutLockChange ?? (() => {})}
+                  locationLabel={workZoneSnapshot.locationLabel}
+                  height={350}
+                  geometry={geometry}
+                  diagramJob={diagramJob}
+                  diagramPlan={null}
+                  hasGeneratedPlan={false}
+                />
               </InView>
             )}
-
-            {/* Diagram Preview - Geometry Only */}
-            <InView variants="fadeUp" delay={workZoneSnapshot ? 0.06 : 0}>
-              <div className="bg-white border border-slate-200 rounded-sm shadow-lg p-1 relative overflow-hidden group">
-                <div className="absolute top-0 left-0 w-full h-1 bg-amber-400 opacity-50"></div>
-                <DiagramPreview
-                  geometry={geometry!}
-                  job={diagramJob}
-                  plan={null}
-                  height={400}
-                />
-                {/* Overlay Warning */}
-                <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur text-xs font-mono text-slate-500 px-2 py-1 rounded-sm border border-slate-200 shadow-sm pointer-events-none">
-                  PREVIEW ONLY // NOT VERIFIED
-                </div>
-              </div>
-            </InView>
             
             {/* Estimated Input Summary */}
             {jobInfo && (
@@ -775,11 +765,32 @@ export default function OutputPanel({
                     <span className="text-[10px] text-slate-400 font-mono">ID: {Math.random().toString(36).substr(2, 9).toUpperCase()}</span>
                 </div>
 
+                {/* Field Layout Panel - Map Mockup with device overlay + Schematic tab */}
+                {workZoneSnapshot && (
+                  <InView variants="fadeUp" delay={0}>
+                    <FieldLayoutPanel
+                      mapToken={workZoneSnapshot.mapToken}
+                      polygonRing={workZoneSnapshot.polygonRing}
+                      centroid={workZoneSnapshot.centroid}
+                      layout={fieldLayout ?? null}
+                      onLayoutChange={onFieldLayoutChange ?? (() => {})}
+                      isLocked={isLayoutLocked}
+                      onLockChange={onLayoutLockChange ?? (() => {})}
+                      locationLabel={workZoneSnapshot.locationLabel}
+                      height={350}
+                      geometry={geometry}
+                      diagramJob={diagramJob}
+                      diagramPlan={diagramPlan}
+                      hasGeneratedPlan={true}
+                    />
+                  </InView>
+                )}
+
                 {/* Exportable content container */}
                 <div ref={exportRef} data-testid="tcp-output-panel" className="flex flex-col gap-6">
                   
                   {/* Summary Card - Defensive: use optional chaining for safety during transitions */}
-                  <InView variants="fadeUp" delay={0}>
+                  <InView variants="fadeUp" delay={0.06}>
                     <div className="bg-white border border-slate-200 rounded-sm p-4 shadow-sm relative">
                       <div className="absolute top-0 left-0 w-1 h-full bg-slate-200"></div>
                       <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 pl-2">
