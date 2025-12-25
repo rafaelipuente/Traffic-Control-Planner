@@ -1,9 +1,10 @@
 /**
- * Street-Aware Layout Suggestion Engine (Phase 2)
+ * Street-Aware Layout Suggestion Engine (Phase 2.1)
  * 
  * Generates TCP device placement aligned to REAL streets when road centerline
- * data is available (via queryRenderedFeatures). Falls back to polygon-axis
- * method when no road data is provided.
+ * data is available (via queryRenderedFeatures). Signs are placed on the correct
+ * shoulder (left/right) relative to traffic direction and the work zone.
+ * Falls back to polygon-axis method when no road data is provided.
  */
 
 import {
@@ -28,6 +29,15 @@ const M_TO_DEG = 1 / 111320;
 
 /** Minimum distance between devices to prevent stacking (meters) */
 const MIN_DEVICE_SPACING_M = 3;
+
+/** Shoulder offset distance - how far from road centerline to place signs (meters) */
+const SHOULDER_OFFSET_M = 5;
+
+/** Maximum distance from road centerline for a valid sign placement (meters) */
+const MAX_SIGN_ROAD_DISTANCE_M = 15;
+
+/** Debug mode flag - set to true to enable debug overlays in dev */
+export const DEBUG_LAYOUT = false;
 
 /** Speed-based spacing in feet */
 const SPEED_CONFIG: Record<number, { signSpacingFt: number[]; taperLengthFt: number; coneSpacingFt: number }> = {
@@ -55,6 +65,36 @@ const ROAD_CLASS_PRIORITY: Record<string, number> = {
   "path": 1,
   "default": 2,
 };
+
+// ============================================
+// DEBUG DATA STRUCTURE
+// ============================================
+
+export interface LayoutDebugInfo {
+  dominantRoad: RoadPolyline | null;
+  entryPoint: Point | null;
+  upstreamBearing: number | null;
+  shoulderSide: "left" | "right" | null;
+  signTargetsBefore: Point[]; // Before snapping/offset
+  signTargetsAfter: Point[];  // After snapping/offset
+}
+
+let _debugInfo: LayoutDebugInfo | null = null;
+
+export function getLayoutDebugInfo(): LayoutDebugInfo | null {
+  return _debugInfo;
+}
+
+function resetDebugInfo(): void {
+  _debugInfo = DEBUG_LAYOUT ? {
+    dominantRoad: null,
+    entryPoint: null,
+    upstreamBearing: null,
+    shoulderSide: null,
+    signTargetsBefore: [],
+    signTargetsAfter: [],
+  } : null;
+}
 
 // ============================================
 // GEOMETRY UTILITIES
@@ -209,15 +249,18 @@ function distanceToPolygon(point: Point, ring: number[][]): number {
 // POLYLINE UTILITIES
 // ============================================
 
-/**
- * Project a point onto a polyline and return the closest point + segment info
- */
-function projectPointToPolyline(point: Point, polyline: RoadPolyline): {
+interface PolylineProjection {
   point: Point;
   segmentIndex: number;
   distanceAlongLine: number;
   distanceFromLine: number;
-} {
+  segmentBearing: number;
+}
+
+/**
+ * Project a point onto a polyline and return the closest point + segment info
+ */
+function projectPointToPolyline(point: Point, polyline: RoadPolyline): PolylineProjection {
   let minDist = Infinity;
   let closestPoint: Point = polyline[0];
   let closestSegment = 0;
@@ -242,11 +285,17 @@ function projectPointToPolyline(point: Point, polyline: RoadPolyline): {
     cumulativeDistance += segmentLength;
   }
   
+  // Calculate bearing at the closest segment
+  const segA = polyline[closestSegment];
+  const segB = polyline[Math.min(closestSegment + 1, polyline.length - 1)];
+  const segmentBearing = bearing(segA, segB);
+  
   return {
     point: closestPoint,
     segmentIndex: closestSegment,
     distanceAlongLine: distanceAlong,
     distanceFromLine: minDist,
+    segmentBearing,
   };
 }
 
@@ -263,36 +312,30 @@ function polylineLength(polyline: RoadPolyline): number {
 
 /**
  * Walk along a polyline by a given distance (meters) from a starting point
- * Negative distance walks backwards
+ * Returns { point, segmentIndex, bearing } or null if cannot walk
+ * 
+ * IMPORTANT: This version does NOT extend beyond the polyline - it clamps to endpoints
+ * to avoid placing signs off-road.
  */
-function walkAlongPolyline(
+function walkAlongPolylineStrict(
   polyline: RoadPolyline,
   startSegmentIndex: number,
   startDistanceAlong: number,
   walkDistance: number
-): Point | null {
+): { point: Point; segmentIndex: number; bearing: number } | null {
+  if (polyline.length < 2) return null;
+  
   // Calculate cumulative distances to each vertex
   const distances: number[] = [0];
   for (let i = 0; i < polyline.length - 1; i++) {
     distances.push(distances[i] + distanceMeters(polyline[i], polyline[i + 1]));
   }
   
-  const targetDistance = startDistanceAlong + walkDistance;
-  
-  // Handle walking off the end
-  if (targetDistance < 0) {
-    // Extend from start
-    const dir = bearing(polyline[1], polyline[0]);
-    return movePoint(polyline[0], -targetDistance, dir);
-  }
-  
   const totalLength = distances[distances.length - 1];
-  if (targetDistance > totalLength) {
-    // Extend from end
-    const lastIdx = polyline.length - 1;
-    const dir = bearing(polyline[lastIdx - 1], polyline[lastIdx]);
-    return movePoint(polyline[lastIdx], targetDistance - totalLength, dir);
-  }
+  let targetDistance = startDistanceAlong + walkDistance;
+  
+  // Clamp to polyline bounds (don't extend off-road)
+  targetDistance = Math.max(0, Math.min(totalLength, targetDistance));
   
   // Find the segment containing the target distance
   for (let i = 0; i < distances.length - 1; i++) {
@@ -302,19 +345,91 @@ function walkAlongPolyline(
       
       const a = polyline[i];
       const b = polyline[i + 1];
-      return [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+      const point: Point = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+      const segBearing = bearing(a, b);
+      
+      return { point, segmentIndex: i, bearing: segBearing };
     }
   }
   
-  return polyline[polyline.length - 1];
+  // Fallback to last point
+  const lastIdx = polyline.length - 1;
+  return { 
+    point: polyline[lastIdx], 
+    segmentIndex: lastIdx - 1,
+    bearing: bearing(polyline[lastIdx - 1], polyline[lastIdx])
+  };
 }
 
 /**
- * Get the bearing at a point along a polyline
+ * Snap a point to the nearest point on the polyline
  */
-function bearingAtPolylinePoint(polyline: RoadPolyline, segmentIndex: number): number {
-  const idx = Math.min(segmentIndex, polyline.length - 2);
-  return bearing(polyline[idx], polyline[idx + 1]);
+function snapToPolyline(point: Point, polyline: RoadPolyline): { point: Point; bearing: number } {
+  const projection = projectPointToPolyline(point, polyline);
+  return { point: projection.point, bearing: projection.segmentBearing };
+}
+
+// ============================================
+// SHOULDER SIDE DETECTION
+// ============================================
+
+type ShoulderSide = "left" | "right";
+
+/**
+ * Determine which shoulder (left or right) to place signs on.
+ * Signs should be placed on the side AWAY from the work zone polygon
+ * so they're visible to approaching traffic without obstructing work.
+ * 
+ * Method:
+ * 1. Get the road bearing at the entry point (upstream direction)
+ * 2. Compute perpendicular directions (left = bearing - 90°, right = bearing + 90°)
+ * 3. Test which side has the polygon centroid
+ * 4. Place signs on the OPPOSITE side
+ */
+function computeShoulderSide(
+  roadBearing: number,
+  roadPoint: Point,
+  polygonCentroid: Point
+): ShoulderSide {
+  // Left normal = bearing - 90° (perpendicular left)
+  const leftNormal = roadBearing - Math.PI / 2;
+  // Right normal = bearing + 90° (perpendicular right)
+  const rightNormal = roadBearing + Math.PI / 2;
+  
+  // Sample points on each side
+  const testDist = 20; // meters
+  const leftPoint = movePoint(roadPoint, testDist, leftNormal);
+  const rightPoint = movePoint(roadPoint, testDist, rightNormal);
+  
+  // Check which side is closer to the polygon centroid
+  const distToLeftFromCentroid = distanceMeters(leftPoint, polygonCentroid);
+  const distToRightFromCentroid = distanceMeters(rightPoint, polygonCentroid);
+  
+  // Place signs on the side AWAY from the polygon (opposite side)
+  if (distToLeftFromCentroid < distToRightFromCentroid) {
+    // Polygon is on the left, so place signs on the right
+    return "right";
+  } else {
+    // Polygon is on the right, so place signs on the left
+    return "left";
+  }
+}
+
+/**
+ * Apply shoulder offset to a point based on road bearing and shoulder side
+ */
+function applyShoulderOffset(
+  point: Point,
+  roadBearing: number,
+  shoulderSide: ShoulderSide,
+  offsetM: number = SHOULDER_OFFSET_M
+): Point {
+  // Left = bearing - 90°, Right = bearing + 90°
+  const normalBearing = shoulderSide === "left" 
+    ? roadBearing - Math.PI / 2 
+    : roadBearing + Math.PI / 2;
+  
+  return movePoint(point, offsetM, normalBearing);
 }
 
 // ============================================
@@ -330,6 +445,7 @@ interface ScoredRoad {
 
 /**
  * Select the dominant road polyline near the work zone
+ * Improved scoring: 60% road class weight, 40% length near polygon
  */
 function selectDominantRoadPolyline(
   roads: RoadPolyline[],
@@ -360,7 +476,6 @@ function selectDominantRoadPolyline(
       const p1 = road[i];
       const p2 = road[i + 1];
       
-      // Simple bbox intersection check
       const segMinLng = Math.min(p1[0], p2[0]);
       const segMaxLng = Math.max(p1[0], p2[0]);
       const segMinLat = Math.min(p1[1], p2[1]);
@@ -376,19 +491,19 @@ function selectDominantRoadPolyline(
     if (!intersectsBbox) continue;
     
     // Calculate distance from centroid to road
-    const { distanceFromLine } = projectPointToPolyline(centroid, road);
+    const projection = projectPointToPolyline(centroid, road);
+    const distanceFromCentroid = projection.distanceFromLine;
     
     // Score: prefer closer roads with more length in bbox
-    // Lower distance = better, higher length = better
-    const distanceScore = Math.max(0, 500 - distanceFromLine) / 500; // 0-1, 1 is best
-    const lengthScore = Math.min(lengthInBbox / 200, 1); // 0-1, cap at 200m
-    const score = distanceScore * 0.7 + lengthScore * 0.3;
+    const distanceScore = Math.max(0, 500 - distanceFromCentroid) / 500;
+    const lengthScore = Math.min(lengthInBbox / 200, 1);
+    const score = distanceScore * 0.6 + lengthScore * 0.4;
     
     if (score > 0) {
       scoredRoads.push({
         polyline: road,
         score,
-        distanceFromCentroid: distanceFromLine,
+        distanceFromCentroid,
         lengthInBbox,
       });
     }
@@ -406,9 +521,6 @@ function selectDominantRoadPolyline(
 // FALLBACK: POLYGON AXIS DERIVATION
 // ============================================
 
-/**
- * Find the longest edge of a polygon and return its bearing
- */
 function findLongestEdgeBearing(ring: number[][]): { bearing: number; midpoint: Point } {
   let maxDist = 0;
   let longestEdge: { p1: Point; p2: Point } = { p1: [0, 0], p2: [0, 0] };
@@ -430,9 +542,6 @@ function findLongestEdgeBearing(ring: number[][]): { bearing: number; midpoint: 
   };
 }
 
-/**
- * Find intersection points between a line and polygon
- */
 function linePolygonIntersections(lineStart: Point, lineEnd: Point, ring: number[][]): Point[] {
   const intersections: Point[] = [];
   
@@ -479,9 +588,6 @@ interface FallbackAxis {
   upstreamBearing: number;
 }
 
-/**
- * Derive work zone axis from polygon geometry (fallback method)
- */
 function deriveFallbackAxis(ring: number[][]): FallbackAxis {
   const centroid = computeCentroid(ring);
   const { bearing: edgeBearing } = findLongestEdgeBearing(ring);
@@ -519,9 +625,6 @@ function getSpeedConfig(speedMph: number): { signSpacingFt: number[]; taperLengt
   return SPEED_CONFIG[rounded] || SPEED_CONFIG[35];
 }
 
-/**
- * Check if a device position is too close to existing devices
- */
 function isTooCloseToExisting(pos: Point, existingDevices: FieldDevice[], minSpacing: number): boolean {
   for (const device of existingDevices) {
     if (distanceMeters(pos, device.lngLat) < minSpacing) {
@@ -532,7 +635,12 @@ function isTooCloseToExisting(pos: Point, existingDevices: FieldDevice[], minSpa
 }
 
 /**
- * Place signs along a road polyline (street-aware method)
+ * Place signs along a road polyline with proper shoulder offset (street-aware method)
+ * 
+ * FIXED ISSUES:
+ * 1. Signs are now placed on the correct shoulder (left/right based on polygon location)
+ * 2. Signs are snapped to the road polyline and not extended off-road
+ * 3. Signs are validated to be near the road
  */
 function placeSignsAlongRoad(
   road: RoadPolyline,
@@ -546,58 +654,93 @@ function placeSignsAlongRoad(
   const projection = projectPointToPolyline(centroid, road);
   
   // Determine which direction is "upstream" (away from polygon center)
-  // Try both directions and pick the one that leads outside the polygon faster
   const testDist = 50; // meters
-  const testPoint1 = walkAlongPolyline(road, projection.segmentIndex, projection.distanceAlongLine, -testDist);
-  const testPoint2 = walkAlongPolyline(road, projection.segmentIndex, projection.distanceAlongLine, testDist);
+  const testWalk1 = walkAlongPolylineStrict(road, projection.segmentIndex, projection.distanceAlongLine, -testDist);
+  const testWalk2 = walkAlongPolylineStrict(road, projection.segmentIndex, projection.distanceAlongLine, testDist);
   
-  // Pick direction that goes outside polygon
-  let upstreamDirection = -1; // negative = walk backwards along polyline
-  if (testPoint1 && testPoint2) {
-    const dist1ToPolygon = distanceToPolygon(testPoint1, polygonRing);
-    const dist2ToPolygon = distanceToPolygon(testPoint2, polygonRing);
-    upstreamDirection = dist1ToPolygon > dist2ToPolygon ? -1 : 1;
+  // Pick direction that goes farther from polygon
+  let upstreamDirection = -1;
+  let upstreamBearing = projection.segmentBearing + Math.PI; // Default: reverse of road direction
+  
+  if (testWalk1 && testWalk2) {
+    const dist1ToPolygon = distanceToPolygon(testWalk1.point, polygonRing);
+    const dist2ToPolygon = distanceToPolygon(testWalk2.point, polygonRing);
+    
+    if (dist2ToPolygon > dist1ToPolygon) {
+      upstreamDirection = 1;
+      upstreamBearing = testWalk2.bearing;
+    } else {
+      upstreamDirection = -1;
+      upstreamBearing = testWalk1.bearing + Math.PI; // Reverse since we're going backwards
+    }
   }
   
-  // Place signs upstream
+  // Determine shoulder side
+  const shoulderSide = computeShoulderSide(upstreamBearing, projection.point, centroid);
+  
+  // Store debug info
+  if (_debugInfo) {
+    _debugInfo.dominantRoad = road;
+    _debugInfo.entryPoint = projection.point;
+    _debugInfo.upstreamBearing = upstreamBearing;
+    _debugInfo.shoulderSide = shoulderSide;
+  }
+  
+  // Place signs upstream with shoulder offset
   for (let i = 0; i < config.signSpacingFt.length && i < 3; i++) {
     const distFt = config.signSpacingFt[i];
     const distM = distFt * FT_TO_M;
     
-    let signPos = walkAlongPolyline(
+    // Walk along polyline (strict - no off-road extension)
+    const walkResult = walkAlongPolylineStrict(
       road,
       projection.segmentIndex,
       projection.distanceAlongLine,
       upstreamDirection * distM
     );
     
-    if (!signPos) continue;
+    if (!walkResult) continue;
+    
+    // Store pre-offset position for debug
+    if (_debugInfo) {
+      _debugInfo.signTargetsBefore.push(walkResult.point);
+    }
+    
+    // Apply shoulder offset perpendicular to road
+    let signPos = applyShoulderOffset(walkResult.point, walkResult.bearing, shoulderSide);
     
     // Validation: sign must be OUTSIDE polygon
     let attempts = 0;
-    while (isPointInPolygon(signPos, polygonRing) && attempts < 10) {
+    while (isPointInPolygon(signPos, polygonRing) && attempts < 5) {
       attempts++;
-      signPos = walkAlongPolyline(
-        road,
-        projection.segmentIndex,
-        projection.distanceAlongLine,
-        upstreamDirection * (distM + attempts * 20)
-      );
-      if (!signPos) break;
+      // Try increasing offset
+      signPos = applyShoulderOffset(walkResult.point, walkResult.bearing, shoulderSide, SHOULDER_OFFSET_M + attempts * 2);
     }
     
-    if (!signPos) continue;
+    // Validation: sign must be near road
+    const distToRoad = projectPointToPolyline(signPos, road).distanceFromLine;
+    if (distToRoad > MAX_SIGN_ROAD_DISTANCE_M) {
+      // Reduce offset to stay near road
+      signPos = applyShoulderOffset(walkResult.point, walkResult.bearing, shoulderSide, MAX_SIGN_ROAD_DISTANCE_M * 0.8);
+    }
     
     // Anti-stacking check
     if (isTooCloseToExisting(signPos, devices, MIN_DEVICE_SPACING_M)) {
-      // Push further upstream
-      signPos = walkAlongPolyline(
+      // Move further upstream
+      const adjustedWalk = walkAlongPolylineStrict(
         road,
         projection.segmentIndex,
         projection.distanceAlongLine,
-        upstreamDirection * (distM + 15)
+        upstreamDirection * (distM + MIN_DEVICE_SPACING_M * 2)
       );
-      if (!signPos) continue;
+      if (adjustedWalk) {
+        signPos = applyShoulderOffset(adjustedWalk.point, adjustedWalk.bearing, shoulderSide);
+      }
+    }
+    
+    // Store post-offset position for debug
+    if (_debugInfo) {
+      _debugInfo.signTargetsAfter.push(signPos);
     }
     
     devices.push({
@@ -605,7 +748,13 @@ function placeSignsAlongRoad(
       type: "sign",
       lngLat: signPos,
       label: SIGN_LABELS[i],
-      meta: { sequence: i + 1, purpose: "advance_warning", distanceFt: distFt, method: "road_aligned" },
+      meta: { 
+        sequence: i + 1, 
+        purpose: "advance_warning", 
+        distanceFt: distFt, 
+        method: "road_aligned",
+        shoulderSide,
+      },
     });
   }
   
@@ -613,7 +762,8 @@ function placeSignsAlongRoad(
 }
 
 /**
- * Place signs using fallback axis method
+ * Place signs using fallback axis method (when no road data available)
+ * IMPROVED: Also applies shoulder offset to avoid centerline placement
  */
 function placeSignsFallback(
   axis: FallbackAxis,
@@ -622,22 +772,44 @@ function placeSignsFallback(
 ): FieldDevice[] {
   const devices: FieldDevice[] = [];
   
+  // Determine shoulder side based on polygon position relative to axis
+  const shoulderSide = computeShoulderSide(axis.upstreamBearing, axis.entryPoint, axis.centroid);
+  
+  if (_debugInfo) {
+    _debugInfo.entryPoint = axis.entryPoint;
+    _debugInfo.upstreamBearing = axis.upstreamBearing;
+    _debugInfo.shoulderSide = shoulderSide;
+  }
+  
   for (let i = 0; i < config.signSpacingFt.length && i < 3; i++) {
     const distFt = config.signSpacingFt[i];
     const distM = distFt * FT_TO_M;
     
-    let signPos = movePoint(axis.entryPoint, distM, axis.upstreamBearing);
+    // Move along upstream bearing
+    const basePos = movePoint(axis.entryPoint, distM, axis.upstreamBearing);
+    
+    if (_debugInfo) {
+      _debugInfo.signTargetsBefore.push(basePos);
+    }
+    
+    // Apply shoulder offset
+    let signPos = applyShoulderOffset(basePos, axis.upstreamBearing, shoulderSide);
     
     // Validation: sign must be OUTSIDE polygon
     let attempts = 0;
     while (isPointInPolygon(signPos, polygonRing) && attempts < 5) {
       attempts++;
-      signPos = movePoint(axis.entryPoint, distM + attempts * 20, axis.upstreamBearing);
+      signPos = applyShoulderOffset(basePos, axis.upstreamBearing, shoulderSide, SHOULDER_OFFSET_M + attempts * 3);
     }
     
     // Anti-stacking check
     if (isTooCloseToExisting(signPos, devices, MIN_DEVICE_SPACING_M)) {
-      signPos = movePoint(axis.entryPoint, distM + 15, axis.upstreamBearing);
+      const adjustedBase = movePoint(axis.entryPoint, distM + MIN_DEVICE_SPACING_M * 2, axis.upstreamBearing);
+      signPos = applyShoulderOffset(adjustedBase, axis.upstreamBearing, shoulderSide);
+    }
+    
+    if (_debugInfo) {
+      _debugInfo.signTargetsAfter.push(signPos);
     }
     
     devices.push({
@@ -645,7 +817,13 @@ function placeSignsFallback(
       type: "sign",
       lngLat: signPos,
       label: SIGN_LABELS[i],
-      meta: { sequence: i + 1, purpose: "advance_warning", distanceFt: distFt, method: "axis_fallback" },
+      meta: { 
+        sequence: i + 1, 
+        purpose: "advance_warning", 
+        distanceFt: distFt, 
+        method: "axis_fallback",
+        shoulderSide,
+      },
     });
   }
   
@@ -667,19 +845,6 @@ function placeConesAlongBoundary(
   const taperLengthM = config.taperLengthFt * FT_TO_M;
   const coneSpacingM = config.coneSpacingFt * FT_TO_M;
   
-  // Find the polygon edge segment closest to the entry point
-  let closestEdgeStart = 0;
-  let minDist = Infinity;
-  
-  for (let i = 0; i < polygonRing.length; i++) {
-    const p: Point = [polygonRing[i][0], polygonRing[i][1]];
-    const dist = distanceMeters(entryPoint, p);
-    if (dist < minDist) {
-      minDist = dist;
-      closestEdgeStart = i;
-    }
-  }
-  
   // Direction from entry point toward centroid (into polygon)
   const taperBearing = bearing(entryPoint, centroid);
   const perpBearing = taperBearing + Math.PI / 2;
@@ -692,9 +857,9 @@ function placeConesAlongBoundary(
     // Base position along taper line
     let conePos = movePoint(entryPoint, distAlongTaper, taperBearing);
     
-    // Add perpendicular offset for taper angle (creates diagonal line)
-    const taperOffset = (i / numCones) * 4; // max 4m lateral shift
-    const sideMultiplier = i % 2 === 0 ? 1 : 0.5; // slight alternation
+    // Add perpendicular offset for taper angle
+    const taperOffset = (i / numCones) * 4;
+    const sideMultiplier = i % 2 === 0 ? 1 : 0.5;
     conePos = movePoint(conePos, taperOffset * sideMultiplier, perpBearing);
     
     // Validation: cone should be INSIDE polygon or within 5m of boundary
@@ -707,7 +872,6 @@ function placeConesAlongBoundary(
     
     // Anti-stacking check
     if (isTooCloseToExisting(conePos, [...existingDevices, ...devices], MIN_DEVICE_SPACING_M)) {
-      // Try offset position
       conePos = movePoint(conePos, MIN_DEVICE_SPACING_M, perpBearing);
       if (!isPointInPolygon(conePos, polygonRing)) {
         conePos = clampToPolygon(conePos, polygonRing);
@@ -782,11 +946,12 @@ function placeArrowBoard(entryPoint: Point, upstreamBearing: number, polygonRing
 /**
  * Generate a suggested field layout for a work zone
  * 
- * Phase 2 Algorithm:
+ * Phase 2.1 Algorithm (Fixed):
  * 1. If roadCenterlines provided, select dominant road near polygon
- * 2. Place signs along road (street-aware) or fallback axis
- * 3. Place cones as boundary-aligned taper (no stacking)
- * 4. Validate all placements (inside/outside rules, anti-stacking)
+ * 2. Determine upstream direction and shoulder side (left/right)
+ * 3. Place signs along road with shoulder offset
+ * 4. Place cones as boundary-aligned taper
+ * 5. Validate all placements (inside/outside rules, road proximity, anti-stacking)
  */
 export function suggestFieldLayout(input: LayoutSuggestionInput): FieldLayout {
   const {
@@ -799,6 +964,9 @@ export function suggestFieldLayout(input: LayoutSuggestionInput): FieldLayout {
     roadCenterlines,
   } = input;
   
+  // Reset debug info
+  resetDebugInfo();
+  
   const now = new Date().toISOString();
   const devices: FieldDevice[] = [];
   const config = getSpeedConfig(postedSpeedMph);
@@ -810,54 +978,45 @@ export function suggestFieldLayout(input: LayoutSuggestionInput): FieldLayout {
   let entryPoint: Point;
   let exitPoint: Point;
   let upstreamBearing: number;
-  let usedMethod: "road_aligned" | "axis_fallback";
   
   if (dominantRoad) {
-    // STREET-AWARE: Use road polyline
-    usedMethod = "road_aligned";
-    
-    // Project centroid to road
+    // STREET-AWARE: Use road polyline with shoulder offset
     const projection = projectPointToPolyline(centroid, dominantRoad);
     entryPoint = closestPointOnPolygon(projection.point, polygonRing);
     
     // Determine upstream direction
     const testDist = 50;
-    const testPoint1 = walkAlongPolyline(dominantRoad, projection.segmentIndex, projection.distanceAlongLine, -testDist);
-    const testPoint2 = walkAlongPolyline(dominantRoad, projection.segmentIndex, projection.distanceAlongLine, testDist);
+    const testWalk1 = walkAlongPolylineStrict(dominantRoad, projection.segmentIndex, projection.distanceAlongLine, -testDist);
+    const testWalk2 = walkAlongPolylineStrict(dominantRoad, projection.segmentIndex, projection.distanceAlongLine, testDist);
     
-    if (testPoint1 && testPoint2) {
-      const dist1 = distanceToPolygon(testPoint1, polygonRing);
-      const dist2 = distanceToPolygon(testPoint2, polygonRing);
-      const upstreamPoint = dist1 > dist2 ? testPoint1 : testPoint2;
+    if (testWalk1 && testWalk2) {
+      const dist1 = distanceToPolygon(testWalk1.point, polygonRing);
+      const dist2 = distanceToPolygon(testWalk2.point, polygonRing);
+      const upstreamPoint = dist1 > dist2 ? testWalk1.point : testWalk2.point;
       upstreamBearing = bearing(entryPoint, upstreamPoint);
       
-      // Exit point is opposite direction
-      const downstreamPoint = dist1 > dist2 ? testPoint2 : testPoint1;
+      const downstreamPoint = dist1 > dist2 ? testWalk2.point : testWalk1.point;
       exitPoint = closestPointOnPolygon(downstreamPoint, polygonRing);
     } else {
-      // Fallback within road method
-      upstreamBearing = bearingAtPolylinePoint(dominantRoad, projection.segmentIndex);
+      upstreamBearing = projection.segmentBearing;
       exitPoint = closestPointOnPolygon(movePoint(entryPoint, 100, upstreamBearing + Math.PI), polygonRing);
     }
     
-    // Place signs along road
+    // Place signs along road with shoulder offset
     const signs = placeSignsAlongRoad(dominantRoad, polygonRing, centroid, config);
     devices.push(...signs);
   } else {
-    // FALLBACK: Use polygon axis
-    usedMethod = "axis_fallback";
-    
+    // FALLBACK: Use polygon axis with shoulder offset
     const axis = deriveFallbackAxis(polygonRing);
     entryPoint = axis.entryPoint;
     exitPoint = axis.exitPoint;
     upstreamBearing = axis.upstreamBearing;
     
-    // Place signs using fallback
     const signs = placeSignsFallback(axis, polygonRing, config);
     devices.push(...signs);
   }
   
-  // Place cones (same method for both)
+  // Place cones
   const cones = placeConesAlongBoundary(polygonRing, entryPoint, centroid, config, devices);
   devices.push(...cones);
   
