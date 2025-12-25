@@ -79,16 +79,29 @@ export default function PlannerPage() {
   const stepTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef<boolean>(true);
 
+  // AbortController ref for cancelling in-flight generation requests
+  // This prevents the "clear during generation" race condition
+  const abortControllerRef = useRef<AbortController | null>(null);
+  
+  // Generation token ref for additional guard against stale responses
+  // Increments on both Generate and Clear to invalidate old requests
+  const generationTokenRef = useRef<number>(0);
+
   // Map token from env (client-side)
   const mapToken = process.env.NEXT_PUBLIC_MAP_TOKEN || "";
 
-  // Cleanup timers on unmount
+  // Cleanup timers and abort controller on unmount
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
       if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
       if (stepTimerRef.current) clearTimeout(stepTimerRef.current);
+      // Abort any in-flight request on unmount
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
     };
   }, []);
 
@@ -159,6 +172,19 @@ export default function PlannerPage() {
     // HARD RESET: When geometry is cleared, reset ALL downstream state
     // This prevents stale plan data from appearing after clear
     if (geo === null) {
+      // CRITICAL: Abort any in-flight generation request to prevent race condition
+      // This fixes the "clear during generation shows AI-VERIFIED without geometry" bug
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      
+      // Increment generation token to invalidate any pending responses
+      generationTokenRef.current += 1;
+      
+      // Reset loading state immediately on clear
+      setIsLoading(false);
+      
       setResponse(null);
       setRawJson(null);
       setError(null);
@@ -227,6 +253,19 @@ export default function PlannerPage() {
     const request = buildRequest();
     if (!request) return;
 
+    // Abort any existing in-flight request before starting a new one
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    
+    // Create new AbortController for this request
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    
+    // Capture generation token at start - used to detect if request is stale
+    generationTokenRef.current += 1;
+    const requestToken = generationTokenRef.current;
+
     // Reset progress state
     setElapsedSeconds(0);
     setProgressStep(0);
@@ -243,9 +282,17 @@ export default function PlannerPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(request),
+        signal: controller.signal, // Pass abort signal to fetch
       });
 
       const text = await res.text();
+
+      // GUARD: Check if request was aborted or token changed (e.g., user cleared)
+      // If so, discard results silently - do not update state
+      if (requestToken !== generationTokenRef.current) {
+        console.log("[generate] Discarding stale response - token mismatch");
+        return;
+      }
 
       if (!res.ok) {
         // Try to parse error JSON
@@ -284,6 +331,13 @@ export default function PlannerPage() {
         await new Promise((resolve) => setTimeout(resolve, DEV_DELAY));
       }
       
+      // GUARD: Final check before applying response - token must still match
+      // and geometry must still exist (user might have cleared during DEV_DELAY)
+      if (requestToken !== generationTokenRef.current) {
+        console.log("[generate] Discarding stale response after delay - token mismatch");
+        return;
+      }
+      
       if (isMountedRef.current) {
         setResponse(data);
         setRawJson(JSON.stringify(data, null, 2));
@@ -296,15 +350,29 @@ export default function PlannerPage() {
         setShowToast(true);
       }
     } catch (err) {
-      if (isMountedRef.current) {
+      // Handle AbortError gracefully - user cancelled, no need to show error
+      if (err instanceof Error && err.name === "AbortError") {
+        console.log("[generate] Request aborted by user");
+        // Don't set error state - this is expected when user clears
+        return;
+      }
+      
+      // Only show error if token still matches (request wasn't invalidated)
+      if (isMountedRef.current && requestToken === generationTokenRef.current) {
         setError(err instanceof Error ? err.message : "Unknown error occurred");
       }
     } finally {
-      if (isMountedRef.current) {
+      // Only update loading state if this request is still current
+      if (isMountedRef.current && requestToken === generationTokenRef.current) {
         setIsLoading(false);
       }
+      
+      // Clear the controller ref if this is the current controller
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
     }
-  }, [buildRequest]);
+  }, [buildRequest, jobDetails]);
 
   const handleRegenerate = useCallback(() => {
     handleGenerate();
