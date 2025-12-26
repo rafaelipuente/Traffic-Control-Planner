@@ -172,6 +172,12 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
   const [debugDrawMode, setDebugDrawMode] = useState<string>("simple_select");
   const [debugLastEvent, setDebugLastEvent] = useState<string>("none");
   const [debugInteractionsDisabled, setDebugInteractionsDisabled] = useState(false);
+  const [debugReadyStatus, setDebugReadyStatus] = useState<string>("initializing");
+
+  // Map/Draw readiness tracking to prevent race conditions after hard refresh
+  const [isMapDrawReady, setIsMapDrawReady] = useState(false);
+  const pendingStartDrawRef = useRef(false);
+  const executeStartDrawingRef = useRef<(() => void) | null>(null);
 
   const IS_DEV = process.env.NODE_ENV !== "production";
 
@@ -435,6 +441,71 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
     drawRef.current = draw;
     map.addControl(draw as unknown as mapboxgl.IControl, "top-right");
 
+    /**
+     * READINESS GATING: Wait for map to be fully loaded before allowing draw operations.
+     * This prevents race conditions after hard refresh where Force Draw Mode is clicked
+     * before map/draw controls are initialized.
+     */
+    const checkAndSetReady = () => {
+      const mapLoaded = map.isStyleLoaded();
+      const drawExists = drawRef.current !== null;
+      const drawCallable = drawExists && typeof drawRef.current?.getMode === "function";
+      let drawMode = "unknown";
+      
+      try {
+        if (drawCallable && drawRef.current) {
+          drawMode = drawRef.current.getMode();
+        }
+      } catch {
+        drawMode = "error";
+      }
+      
+      console.log(`[DRAW_READY] mapLoaded=${mapLoaded}, drawExists=${drawExists}, drawCallable=${drawCallable}, drawMode=${drawMode}`);
+      
+      const isReady = mapLoaded && drawExists && drawCallable && drawMode !== "error";
+      
+      if (isReady) {
+        setIsMapDrawReady(true);
+        setDebugReadyStatus("ready");
+        setDebugDrawMode(drawMode);
+        
+        // If there was a pending draw request, execute it now via ref
+        if (pendingStartDrawRef.current) {
+          console.log("[DRAW_READY] Executing pending start draw request");
+          pendingStartDrawRef.current = false;
+          // Small delay to ensure everything is settled, then call via ref
+          setTimeout(() => {
+            if (executeStartDrawingRef.current) {
+              executeStartDrawingRef.current();
+            } else {
+              console.error("[DRAW_READY] executeStartDrawingRef.current is null");
+            }
+          }, 50);
+        }
+      }
+      
+      return isReady;
+    };
+
+    // Check on map load event
+    map.on("load", () => {
+      console.log("[DRAW_READY] map.on('load') fired");
+      checkAndSetReady();
+    });
+
+    // Also check on style.load in case map.load already fired
+    map.on("style.load", () => {
+      console.log("[DRAW_READY] map.on('style.load') fired");
+      checkAndSetReady();
+    });
+
+    // Fallback: check after a short delay in case events already fired
+    // Always check - the function handles the case where we're already ready
+    setTimeout(() => {
+      console.log("[DRAW_READY] Fallback timeout check");
+      checkAndSetReady();
+    }, 500);
+
     const geocoder = new MapboxGeocoder({
       accessToken: mapToken,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -622,15 +693,36 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
     };
   }, [isDrawing, workZoneMode, handleMapClick]);
 
-  const handleStartDrawing = () => {
-    if (!mapRef.current) return;
+  /**
+   * EXECUTE START DRAWING - The actual implementation that enters draw mode.
+   * This should only be called when map and draw are confirmed ready.
+   * Separated from handleStartDrawing to enable queuing when not ready.
+   */
+  const executeStartDrawing = useCallback(() => {
+    console.log("[START_DRAW] Executing start drawing sequence");
     
-    console.log("[DRAW] start requested");
+    const map = mapRef.current;
+    const draw = drawRef.current;
+    
+    if (!map) {
+      console.error("[START_DRAW] mapRef.current is null");
+      setDrawingError("Map not initialized. Please refresh the page.");
+      return;
+    }
+    
+    if (!draw) {
+      console.error("[START_DRAW] drawRef.current is null");
+      setDrawingError("Draw control not initialized. Please refresh the page.");
+      return;
+    }
     
     // Clear any existing geometry
-    if (drawRef.current) {
-      drawRef.current.deleteAll();
+    try {
+      draw.deleteAll();
+    } catch (err) {
+      console.warn("[START_DRAW] draw.deleteAll() failed:", err);
     }
+    
     clearClickMarkers();
     clearPreviewPolygon();
     setClickPoints([]);
@@ -640,35 +732,76 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
     // Dismiss geocoder overlay to prevent it from blocking map clicks
     if (geocoderRef.current) {
       geocoderRef.current.clear();
-      // Force close the suggestions dropdown
       const geocoderContainer = document.querySelector(".mapboxgl-ctrl-geocoder");
       if (geocoderContainer) {
         const input = geocoderContainer.querySelector("input");
         if (input) {
-          input.blur();
+          (input as HTMLInputElement).blur();
         }
       }
     }
     
-    if (workZoneMode === "area") {
-      // Use MapboxDraw for polygon mode
-      if (drawRef.current) {
-        disableMapInteractions(); // CRITICAL: Disable map interactions so clicks go to draw control
-        drawRef.current.changeMode("draw_polygon");
-        
-        // Log the mode after changing and update debug state
-        setTimeout(() => {
-          const mode = drawRef.current?.getMode();
-          console.log(`[DRAW] mode=${mode} after changeMode`);
-          setDebugDrawMode(mode || "unknown");
-        }, 100);
-      }
+    // Step 1: Disable map interactions FIRST
+    console.log("[START_DRAW] Step 1: disableInteractions");
+    disableMapInteractions();
+    
+    // Step 2: Change draw mode to draw_polygon
+    console.log("[START_DRAW] Step 2: changeMode('draw_polygon')");
+    try {
+      draw.changeMode("draw_polygon");
+    } catch (err) {
+      console.error("[START_DRAW] draw.changeMode('draw_polygon') failed:", err);
+      setDrawingError("Failed to enter draw mode. Please try again.");
+      enableMapInteractions();
+      return;
     }
-    // For roadSegment and intersection, we handle clicks manually
+    
+    // Step 3: Confirm the mode change by reading back
+    setTimeout(() => {
+      const confirmedMode = draw.getMode();
+      console.log(`[START_DRAW] Step 3: confirmedMode=${confirmedMode}`);
+      setDebugDrawMode(confirmedMode);
+      setDebugLastEvent("start_draw");
+      
+      if (confirmedMode !== "draw_polygon") {
+        console.error(`[START_DRAW] Mode change failed! Expected 'draw_polygon' but got '${confirmedMode}'`);
+        setDrawingError(`Draw mode failed: got ${confirmedMode}`);
+      }
+    }, 50);
     
     setIsDrawing(true);
     onGeometryChange(null, locationLabelRef.current);
-  };
+  }, [clearClickMarkers, clearPreviewPolygon, disableMapInteractions, enableMapInteractions, onGeometryChange]);
+
+  // Keep ref in sync with executeStartDrawing for use in map load callback
+  useEffect(() => {
+    executeStartDrawingRef.current = executeStartDrawing;
+  }, [executeStartDrawing]);
+
+  /**
+   * HANDLE START DRAWING - Entry point with readiness gating.
+   * If map/draw not ready (race condition after hard refresh), queues the request.
+   */
+  const handleStartDrawing = useCallback(() => {
+    console.log(`[FORCE_DRAW_CLICK] ready=${isMapDrawReady}, queued=${pendingStartDrawRef.current}`);
+    
+    // Always set workZoneMode to area for polygon drawing
+    if (workZoneMode !== "area") {
+      setWorkZoneMode("area");
+    }
+    
+    if (!isMapDrawReady) {
+      // Map not ready yet - queue the request
+      console.log("[FORCE_DRAW_CLICK] Map not ready, queuing start draw request");
+      pendingStartDrawRef.current = true;
+      setDebugLastEvent("queued");
+      setDrawingError("Initializing map... please wait.");
+      return;
+    }
+    
+    // Map is ready - execute immediately
+    executeStartDrawing();
+  }, [isMapDrawReady, workZoneMode, executeStartDrawing]);
 
   const handleClear = () => {
     console.log("[DRAW] clear requested");
@@ -970,19 +1103,37 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
               </div>
             </div>
             
+            {/* Map/Draw Ready Status */}
+            <div>
+              <span className="text-slate-400">ready:</span>{" "}
+              <span className={isMapDrawReady ? "text-emerald-300 font-bold" : "text-red-300"}>
+                {isMapDrawReady ? "true" : "false"}
+              </span>
+              <span className="text-slate-500 text-[8px] ml-1">({debugReadyStatus})</span>
+            </div>
+
             {/* Force Draw Mode button */}
             <button
               type="button"
               onClick={() => {
                 console.log("[DRAW] force-start from debug overlay");
-                if (workZoneMode !== "area") {
-                  setWorkZoneMode("area");
-                }
                 handleStartDrawing();
               }}
-              className="w-full mt-2 px-2 py-1 bg-yellow-500 hover:bg-yellow-600 text-black font-bold text-[9px] rounded transition-colors"
+              disabled={isDrawing}
+              className={`w-full mt-2 px-2 py-1 font-bold text-[9px] rounded transition-colors ${
+                isDrawing 
+                  ? "bg-slate-500 text-slate-300 cursor-not-allowed"
+                  : isMapDrawReady
+                    ? "bg-yellow-500 hover:bg-yellow-600 text-black"
+                    : "bg-orange-500 hover:bg-orange-600 text-white"
+              }`}
             >
-              ⚡ Force Draw Mode
+              {isDrawing 
+                ? "Drawing..." 
+                : isMapDrawReady 
+                  ? "⚡ Force Draw Mode" 
+                  : "⏳ Force Draw (queued)"
+              }
             </button>
           </div>
         )}
