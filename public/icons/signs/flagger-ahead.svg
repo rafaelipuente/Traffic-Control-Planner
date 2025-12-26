@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- MUTCD W20-7a: Flagger Ahead -->
+  <!-- Diamond shape background -->
+  <path d="M24 2 L46 24 L24 46 L2 24 Z" fill="#FFB300" stroke="#000" stroke-width="2"/>
+  <!-- Flagger symbol (simplified person with flag) -->
+  <circle cx="24" cy="14" r="3" fill="#000"/>
+  <path d="M24 17 L24 30" stroke="#000" stroke-width="2" stroke-linecap="round"/>
+  <path d="M20 22 L28 22" stroke="#000" stroke-width="2" stroke-linecap="round"/>
+  <path d="M20 30 L24 35 L28 30" stroke="#000" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <!-- Flag -->
+  <path d="M28 17 L28 12 L34 14.5 L28 17" fill="#EF4444"/>
+</svg>
+

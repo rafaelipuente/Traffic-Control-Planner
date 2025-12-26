@@ -373,8 +373,8 @@ export default function FieldLayoutPanel({
           label: deviceType === "sign" ? getNextSignLabel() : undefined,
         };
         
-        // Verify device was created with correct type
-        console.log(`[EditMode Add] Created device: id="${newDevice.id}", type="${newDevice.type}"`);
+        // Verify device was created with correct type and subtype
+        console.log(`[AddDevice] type=${newDevice.type} signKind=${newDevice.subtype || "none"} id=${newDevice.id}`);
         
         if (currentLayout) {
           const newLayout = cloneLayout(currentLayout, "user_modified");
@@ -610,17 +610,29 @@ export default function FieldLayoutPanel({
       markersRef.current.set(device.id, marker);
     });
     
-    // DEV INVARIANT: Verify DOM marker count matches layout
+    // MARKER SYNC VERIFICATION
     const domMarkerCount = markersRef.current.size;
     const layoutDeviceCount = layout.devices.length;
     const coneCount = layout.devices.filter(d => d.type === "cone").length;
     const signCount = layout.devices.filter(d => d.type === "sign").length;
     
-    console.log(`[INV] layout: total=${layoutDeviceCount} cones=${coneCount} signs=${signCount}`);
-    console.log(`[INV] domMarkers=${domMarkerCount} ${domMarkerCount === layoutDeviceCount ? "✅" : "❌ MISMATCH"}`);
+    // Log marker sync status
+    console.log(`[MarkerSync] devices=${layoutDeviceCount} markers=${domMarkerCount} (cones=${coneCount} signs=${signCount})`);
     
     if (domMarkerCount !== layoutDeviceCount) {
-      console.error(`[INVARIANT VIOLATION] DOM markers (${domMarkerCount}) != layout devices (${layoutDeviceCount})`);
+      // Find missing markers
+      const markerIds = Array.from(markersRef.current.keys());
+      const deviceIds = layout.devices.map(d => d.id);
+      const missingInMarkers = deviceIds.filter(id => !markerIds.includes(id));
+      const extraInMarkers = markerIds.filter(id => !deviceIds.includes(id));
+      
+      console.error(`[MarkerSyncMismatch] devices=${layoutDeviceCount} markers=${domMarkerCount}`);
+      if (missingInMarkers.length > 0) {
+        console.error(`[MarkerSyncMismatch] missing in markers: [${missingInMarkers.join(", ")}]`);
+      }
+      if (extraInMarkers.length > 0) {
+        console.error(`[MarkerSyncMismatch] extra in markers: [${extraInMarkers.join(", ")}]`);
+      }
     }
   }, [layout, isEditMode, activeTool, selectedDeviceId, onLayoutChange]);
 

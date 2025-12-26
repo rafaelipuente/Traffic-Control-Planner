@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- Generic Warning Sign -->
+  <!-- Diamond shape background -->
+  <path d="M24 2 L46 24 L24 46 L2 24 Z" fill="#FFB300" stroke="#000" stroke-width="2"/>
+  <!-- Warning symbol -->
+  <text x="24" y="30" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#000">!</text>
+</svg>
+

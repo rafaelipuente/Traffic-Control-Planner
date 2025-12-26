@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- Traffic Cone -->
+  <!-- Cone body -->
+  <path d="M24 4 L10 42 L38 42 Z" fill="#FF6B00" stroke="#333" stroke-width="1"/>
+  <!-- White reflective stripes -->
+  <path d="M14 28 L34 28" stroke="white" stroke-width="4"/>
+  <path d="M11 38 L37 38" stroke="white" stroke-width="4"/>
+  <!-- Base -->
+  <rect x="8" y="42" width="32" height="4" fill="#333" rx="1"/>
+</svg>
+
