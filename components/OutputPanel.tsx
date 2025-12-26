@@ -820,30 +820,30 @@ export default function OutputPanel({
                     <span className="text-[10px] text-slate-400 font-mono">ID: {Math.random().toString(36).substr(2, 9).toUpperCase()}</span>
                 </div>
 
-                {/* Field Layout Panel - Map Mockup with device overlay + Schematic tab */}
-                {workZoneSnapshot && (
-                  <InView variants="fadeUp" delay={0}>
-                    <FieldLayoutPanel
-                      mapToken={workZoneSnapshot.mapToken}
-                      polygonRing={workZoneSnapshot.polygonRing}
-                      centroid={workZoneSnapshot.centroid}
-                      layout={fieldLayout ?? null}
-                      onLayoutChange={onFieldLayoutChange ?? (() => {})}
-                      isLocked={isLayoutLocked}
-                      onLockChange={onLayoutLockChange ?? (() => {})}
-                      locationLabel={workZoneSnapshot.locationLabel}
-                      height={350}
-                      geometry={geometry}
-                      diagramJob={diagramJob}
-                      diagramPlan={diagramPlan}
-                      onRoadFeaturesExtracted={onRoadFeaturesExtracted}
-                      hasGeneratedPlan={true}
-                    />
-                  </InView>
-                )}
-
                 {/* Exportable content container */}
                 <div ref={exportRef} data-testid="tcp-output-panel" className="flex flex-col gap-6">
+                  
+                  {/* Field Layout Panel - Map Mockup with device overlay + Schematic tab */}
+                  {workZoneSnapshot && (
+                    <InView variants="fadeUp" delay={0}>
+                      <FieldLayoutPanel
+                        mapToken={workZoneSnapshot.mapToken}
+                        polygonRing={workZoneSnapshot.polygonRing}
+                        centroid={workZoneSnapshot.centroid}
+                        layout={fieldLayout ?? null}
+                        onLayoutChange={onFieldLayoutChange ?? (() => {})}
+                        isLocked={isLayoutLocked}
+                        onLockChange={onLayoutLockChange ?? (() => {})}
+                        locationLabel={workZoneSnapshot.locationLabel}
+                        height={350}
+                        geometry={geometry}
+                        diagramJob={diagramJob}
+                        diagramPlan={diagramPlan}
+                        onRoadFeaturesExtracted={onRoadFeaturesExtracted}
+                        hasGeneratedPlan={true}
+                      />
+                    </InView>
+                  )}
                   
                   {/* Summary Card - Defensive: use optional chaining for safety during transitions */}
                   <InView variants="fadeUp" delay={0.06}>
