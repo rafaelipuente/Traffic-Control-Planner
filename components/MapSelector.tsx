@@ -1,5 +1,28 @@
 "use client";
 
+/**
+ * MapSelector Component - Work Zone Drawing
+ * 
+ * REVERTED TO LAST KNOWN WORKING VERSION (commit ec2c024)
+ * Removed complexity that broke core drawing:
+ * - DEV debug overlay
+ * - Force Draw Mode button
+ * - Finish Area button
+ * - Readiness gating / queued execution
+ * - Extra debug states
+ * 
+ * TEST CHECKLIST (manual verification):
+ * [ ] Load planner page
+ * [ ] Select "Area (Advanced)" mode
+ * [ ] Click "Define Work Zone" button
+ * [ ] Click 4 points on the map
+ * [ ] Double-click to finish the polygon
+ * [ ] Verify: Polygon appears with amber fill
+ * [ ] Verify: "Selected Area / Work Zone: N points" shows
+ * [ ] Verify: Preview/generation triggers reliably
+ * [ ] Clear and repeat - should work consistently
+ */
+
 import { useRef, useEffect, useState, useCallback } from "react";
 import mapboxgl from "mapbox-gl";
 import MapboxDraw from "@mapbox/mapbox-gl-draw";
@@ -155,76 +178,19 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const drawRef = useRef<MapboxDraw | null>(null);
-  const geocoderRef = useRef<MapboxGeocoder | null>(null);
   const locationLabelRef = useRef<string>("");
   const clickMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const previewPolygonRef = useRef<string | null>(null);
-  const drawTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const [locationLabel, setLocationLabel] = useState<string>("");
   const [isDrawing, setIsDrawing] = useState(false);
   const [workZoneMode, setWorkZoneMode] = useState<WorkZoneMode>("roadSegment");
   const [clickPoints, setClickPoints] = useState<[number, number][]>([]);
-  const [drawingVertexCount, setDrawingVertexCount] = useState(0);
-  const [drawingError, setDrawingError] = useState<string | null>(null);
-
-  // DEV-ONLY: Debug state for polygon drawing diagnostics
-  const [debugDrawMode, setDebugDrawMode] = useState<string>("simple_select");
-  const [debugLastEvent, setDebugLastEvent] = useState<string>("none");
-  const [debugInteractionsDisabled, setDebugInteractionsDisabled] = useState(false);
-  const [debugReadyStatus, setDebugReadyStatus] = useState<string>("initializing");
-
-  // Map/Draw readiness tracking to prevent race conditions after hard refresh
-  const [isMapDrawReady, setIsMapDrawReady] = useState(false);
-  const pendingStartDrawRef = useRef(false);
-  const executeStartDrawingRef = useRef<(() => void) | null>(null);
-
-  const IS_DEV = process.env.NODE_ENV !== "production";
 
   // Keep ref in sync with state for use in callbacks
   useEffect(() => {
     locationLabelRef.current = locationLabel;
   }, [locationLabel]);
-
-  /**
-   * Disable map interactions during polygon drawing.
-   * This prevents clicks from panning/zooming instead of placing vertices.
-   * Map interactions interfere with MapboxDraw's draw_polygon mode.
-   */
-  const disableMapInteractions = useCallback(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    
-    console.log("[DRAW] Disabling map interactions to prevent click interference");
-    map.dragPan.disable();
-    map.dragRotate.disable();
-    map.doubleClickZoom.disable();
-    map.scrollZoom.disable();
-    map.boxZoom.disable();
-    map.keyboard.disable();
-    map.touchZoomRotate.disable();
-    
-    setDebugInteractionsDisabled(true);
-  }, []);
-
-  /**
-   * Re-enable map interactions after drawing completes or is cancelled.
-   */
-  const enableMapInteractions = useCallback(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    
-    console.log("[DRAW] Re-enabling map interactions");
-    map.dragPan.enable();
-    map.dragRotate.enable();
-    map.doubleClickZoom.enable();
-    map.scrollZoom.enable();
-    map.boxZoom.enable();
-    map.keyboard.enable();
-    map.touchZoomRotate.enable();
-    
-    setDebugInteractionsDisabled(false);
-  }, []);
 
   const clearClickMarkers = useCallback(() => {
     clickMarkersRef.current.forEach(m => m.remove());
@@ -441,71 +407,6 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
     drawRef.current = draw;
     map.addControl(draw as unknown as mapboxgl.IControl, "top-right");
 
-    /**
-     * READINESS GATING: Wait for map to be fully loaded before allowing draw operations.
-     * This prevents race conditions after hard refresh where Force Draw Mode is clicked
-     * before map/draw controls are initialized.
-     */
-    const checkAndSetReady = () => {
-      const mapLoaded = map.isStyleLoaded();
-      const drawExists = drawRef.current !== null;
-      const drawCallable = drawExists && typeof drawRef.current?.getMode === "function";
-      let drawMode = "unknown";
-      
-      try {
-        if (drawCallable && drawRef.current) {
-          drawMode = drawRef.current.getMode();
-        }
-      } catch {
-        drawMode = "error";
-      }
-      
-      console.log(`[DRAW_READY] mapLoaded=${mapLoaded}, drawExists=${drawExists}, drawCallable=${drawCallable}, drawMode=${drawMode}`);
-      
-      const isReady = mapLoaded && drawExists && drawCallable && drawMode !== "error";
-      
-      if (isReady) {
-        setIsMapDrawReady(true);
-        setDebugReadyStatus("ready");
-        setDebugDrawMode(drawMode);
-        
-        // If there was a pending draw request, execute it now via ref
-        if (pendingStartDrawRef.current) {
-          console.log("[DRAW_READY] Executing pending start draw request");
-          pendingStartDrawRef.current = false;
-          // Small delay to ensure everything is settled, then call via ref
-          setTimeout(() => {
-            if (executeStartDrawingRef.current) {
-              executeStartDrawingRef.current();
-            } else {
-              console.error("[DRAW_READY] executeStartDrawingRef.current is null");
-            }
-          }, 50);
-        }
-      }
-      
-      return isReady;
-    };
-
-    // Check on map load event
-    map.on("load", () => {
-      console.log("[DRAW_READY] map.on('load') fired");
-      checkAndSetReady();
-    });
-
-    // Also check on style.load in case map.load already fired
-    map.on("style.load", () => {
-      console.log("[DRAW_READY] map.on('style.load') fired");
-      checkAndSetReady();
-    });
-
-    // Fallback: check after a short delay in case events already fired
-    // Always check - the function handles the case where we're already ready
-    setTimeout(() => {
-      console.log("[DRAW_READY] Fallback timeout check");
-      checkAndSetReady();
-    }, 500);
-
     const geocoder = new MapboxGeocoder({
       accessToken: mapToken,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -519,7 +420,6 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
       },
     });
 
-    geocoderRef.current = geocoder;
     map.addControl(geocoder as unknown as mapboxgl.IControl, "top-left");
 
     // Handle geocoder result - fly to location
@@ -542,136 +442,19 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
       }
     });
 
-    // Comprehensive draw event logging and handling
-    // These listeners are registered ONCE during map initialization
-    
-    map.on("draw.modechange", (e: { mode: string }) => {
-      console.log(`[DRAW] draw.modechange mode=${e.mode}`);
-      setDebugDrawMode(e.mode);
-      setDebugLastEvent("modechange");
-      
-      if (e.mode === "draw_polygon") {
-        setDrawingVertexCount(0);
-        setDrawingError(null);
-        
-        // Start timeout to detect failed clicks
-        if (drawTimeoutRef.current) clearTimeout(drawTimeoutRef.current);
-        drawTimeoutRef.current = setTimeout(() => {
-          const features = draw.getAll();
-          const feature = features.features[0] as { geometry?: { coordinates?: number[][][] } } | undefined;
-          const currentVertexCount = feature?.geometry?.coordinates?.[0]?.length || 0;
-          
-          if (currentVertexCount === 0) {
-            console.warn("[DRAW] No vertices placed after 5 seconds - clicks may not be registering");
-            setDrawingError("Clicks aren't registering. Try clicking again or zoom in.");
-          }
-        }, 5000);
-      }
-    });
-
-    map.on("draw.selectionchange", (e: { features: { id?: string }[] }) => {
-      console.log(`[DRAW] draw.selectionchange featureIds=[${e.features.map((f) => f.id).join(", ")}]`);
-      setDebugLastEvent("selectionchange");
-    });
-
-    /**
-     * draw.render fires on every MapboxDraw render cycle.
-     * This is the ONLY reliable way to track vertex count during active polygon drawing,
-     * because draw.update only fires when features are modified AFTER creation.
-     * 
-     * During draw_polygon mode, we query the current draw state to count vertices.
-     */
-    map.on("draw.render", () => {
-      const mode = draw.getMode();
-      if (mode === "draw_polygon") {
-        const features = draw.getAll();
-        if (features.features.length > 0) {
-          const feature = features.features[0] as { geometry?: { type: string; coordinates?: number[][] | number[][][] } };
-          
-          // During drawing, the geometry might be a LineString (before closing) or Polygon
-          let vertexCount = 0;
-          if (feature.geometry?.type === "Polygon" && feature.geometry.coordinates) {
-            // Polygon: coordinates[0] is the outer ring
-            const ring = feature.geometry.coordinates[0] as number[][];
-            // Exclude the closing point if it matches the first point
-            vertexCount = ring.length;
-            if (vertexCount > 1) {
-              const first = ring[0];
-              const last = ring[vertexCount - 1];
-              if (first && last && first[0] === last[0] && first[1] === last[1]) {
-                vertexCount -= 1; // Don't count the duplicate closing point
-              }
-            }
-          } else if (feature.geometry?.type === "LineString" && feature.geometry.coordinates) {
-            // LineString during active drawing
-            vertexCount = (feature.geometry.coordinates as number[][]).length;
-          }
-          
-          setDrawingVertexCount(vertexCount);
-          
-          // Clear 5-second timeout once we have vertices
-          if (vertexCount > 0 && drawTimeoutRef.current) {
-            clearTimeout(drawTimeoutRef.current);
-            drawTimeoutRef.current = null;
-            setDrawingError(null);
-          }
-        }
-      }
-    });
-
-    map.on("draw.update", (e: { features: unknown[] }) => {
-      const feature = e.features[0] as { geometry?: { coordinates?: number[][][] } };
-      const points = feature?.geometry?.coordinates?.[0]?.length || 0;
-      console.log(`[DRAW] draw.update points=${points}`);
-      // Vertex count is now tracked by draw.render, but we still log for debugging
-      setDrawingError(null);
-      setDebugLastEvent("update");
-      processGeometry();
-    });
-
-    map.on("draw.create", (e: { features: unknown[] }) => {
-      const feature = e.features[0] as { id?: string; geometry?: { coordinates?: number[][][] } };
-      const points = feature?.geometry?.coordinates?.[0]?.length || 0;
-      console.log(`[DRAW] draw.create id=${feature.id} points=${points}`);
-      setDebugLastEvent("create");
-      
-      // Clear timeout
-      if (drawTimeoutRef.current) {
-        clearTimeout(drawTimeoutRef.current);
-        drawTimeoutRef.current = null;
-      }
-      
-      // Validate minimum points
-      if (points < 4) { // 3 unique points + 1 closing point
-        console.warn(`[DRAW] Polygon has insufficient points: ${points}`);
-        setDrawingError("Need at least 3 points to create a polygon.");
-        draw.deleteAll();
-        return;
-      }
-      
+    map.on("draw.create", () => {
       setIsDrawing(false);
-      setDrawingVertexCount(0);
-      setDrawingError(null);
-      enableMapInteractions();
       processGeometry();
     });
-
-    map.on("draw.delete", (e: { features: unknown[] }) => {
-      console.log(`[DRAW] draw.delete count=${e.features.length}`);
-      setDebugLastEvent("delete");
-      processGeometry();
-    });
+    map.on("draw.update", processGeometry);
+    map.on("draw.delete", processGeometry);
 
     return () => {
-      if (drawTimeoutRef.current) {
-        clearTimeout(drawTimeoutRef.current);
-      }
       map.remove();
       mapRef.current = null;
       drawRef.current = null;
-      geocoderRef.current = null;
     };
-  }, [mapToken, processGeometry, enableMapInteractions]);
+  }, [mapToken, processGeometry]);
 
   // Attach/detach click handler based on mode and drawing state
   useEffect(() => {
@@ -693,145 +476,40 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
     };
   }, [isDrawing, workZoneMode, handleMapClick]);
 
-  /**
-   * EXECUTE START DRAWING - The actual implementation that enters draw mode.
-   * This should only be called when map and draw are confirmed ready.
-   * Separated from handleStartDrawing to enable queuing when not ready.
-   */
-  const executeStartDrawing = useCallback(() => {
-    console.log("[START_DRAW] Executing start drawing sequence");
-    
-    const map = mapRef.current;
-    const draw = drawRef.current;
-    
-    if (!map) {
-      console.error("[START_DRAW] mapRef.current is null");
-      setDrawingError("Map not initialized. Please refresh the page.");
-      return;
-    }
-    
-    if (!draw) {
-      console.error("[START_DRAW] drawRef.current is null");
-      setDrawingError("Draw control not initialized. Please refresh the page.");
-      return;
-    }
+  const handleStartDrawing = () => {
+    if (!mapRef.current) return;
     
     // Clear any existing geometry
-    try {
-      draw.deleteAll();
-    } catch (err) {
-      console.warn("[START_DRAW] draw.deleteAll() failed:", err);
+    if (drawRef.current) {
+      drawRef.current.deleteAll();
     }
-    
     clearClickMarkers();
     clearPreviewPolygon();
     setClickPoints([]);
-    setDrawingVertexCount(0);
-    setDrawingError(null);
     
-    // Dismiss geocoder overlay to prevent it from blocking map clicks
-    if (geocoderRef.current) {
-      geocoderRef.current.clear();
-      const geocoderContainer = document.querySelector(".mapboxgl-ctrl-geocoder");
-      if (geocoderContainer) {
-        const input = geocoderContainer.querySelector("input");
-        if (input) {
-          (input as HTMLInputElement).blur();
-        }
+    if (workZoneMode === "area") {
+      // Use MapboxDraw for polygon mode
+      if (drawRef.current) {
+        drawRef.current.changeMode("draw_polygon");
       }
     }
-    
-    // Step 1: Disable map interactions FIRST
-    console.log("[START_DRAW] Step 1: disableInteractions");
-    disableMapInteractions();
-    
-    // Step 2: Change draw mode to draw_polygon
-    console.log("[START_DRAW] Step 2: changeMode('draw_polygon')");
-    try {
-      draw.changeMode("draw_polygon");
-    } catch (err) {
-      console.error("[START_DRAW] draw.changeMode('draw_polygon') failed:", err);
-      setDrawingError("Failed to enter draw mode. Please try again.");
-      enableMapInteractions();
-      return;
-    }
-    
-    // Step 3: Confirm the mode change by reading back
-    setTimeout(() => {
-      const confirmedMode = draw.getMode();
-      console.log(`[START_DRAW] Step 3: confirmedMode=${confirmedMode}`);
-      setDebugDrawMode(confirmedMode);
-      setDebugLastEvent("start_draw");
-      
-      if (confirmedMode !== "draw_polygon") {
-        console.error(`[START_DRAW] Mode change failed! Expected 'draw_polygon' but got '${confirmedMode}'`);
-        setDrawingError(`Draw mode failed: got ${confirmedMode}`);
-      }
-    }, 50);
+    // For roadSegment and intersection, we handle clicks manually
     
     setIsDrawing(true);
     onGeometryChange(null, locationLabelRef.current);
-  }, [clearClickMarkers, clearPreviewPolygon, disableMapInteractions, enableMapInteractions, onGeometryChange]);
-
-  // Keep ref in sync with executeStartDrawing for use in map load callback
-  useEffect(() => {
-    executeStartDrawingRef.current = executeStartDrawing;
-  }, [executeStartDrawing]);
-
-  /**
-   * HANDLE START DRAWING - Entry point with readiness gating.
-   * If map/draw not ready (race condition after hard refresh), queues the request.
-   */
-  const handleStartDrawing = useCallback(() => {
-    console.log(`[FORCE_DRAW_CLICK] ready=${isMapDrawReady}, queued=${pendingStartDrawRef.current}`);
-    
-    // Always set workZoneMode to area for polygon drawing
-    if (workZoneMode !== "area") {
-      setWorkZoneMode("area");
-    }
-    
-    if (!isMapDrawReady) {
-      // Map not ready yet - queue the request
-      console.log("[FORCE_DRAW_CLICK] Map not ready, queuing start draw request");
-      pendingStartDrawRef.current = true;
-      setDebugLastEvent("queued");
-      setDrawingError("Initializing map... please wait.");
-      return;
-    }
-    
-    // Map is ready - execute immediately
-    executeStartDrawing();
-  }, [isMapDrawReady, workZoneMode, executeStartDrawing]);
+  };
 
   const handleClear = () => {
-    console.log("[DRAW] clear requested");
-    
     if (drawRef.current) {
       drawRef.current.deleteAll();
-      drawRef.current.changeMode("simple_select");
     }
     clearClickMarkers();
     clearPreviewPolygon();
     setClickPoints([]);
     setIsDrawing(false);
-    setDrawingVertexCount(0);
-    setDrawingError(null);
-    setDebugDrawMode("simple_select");
-    setDebugLastEvent("clear");
-    
-    // Clear any pending timeout
-    if (drawTimeoutRef.current) {
-      clearTimeout(drawTimeoutRef.current);
-      drawTimeoutRef.current = null;
-    }
-    
     if (mapRef.current) {
       mapRef.current.getCanvas().style.cursor = "";
     }
-    
-    // Re-enable map interactions when exiting draw mode
-    enableMapInteractions();
-    
     onGeometryChange(null, locationLabelRef.current);
   };
 
@@ -894,14 +572,13 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
       </div>
 
       {/* Draw controls */}
-      <div className="flex gap-2 flex-wrap items-center">
+      <div className="flex gap-2 flex-wrap">
         <button
           type="button"
           onClick={handleStartDrawing}
-          disabled={isDrawing}
           className={`px-4 py-2 text-sm font-medium rounded-md border transition-colors ${
             isDrawing
-              ? "bg-orange-500 text-white border-orange-600 cursor-not-allowed"
+              ? "bg-orange-500 text-white border-orange-600"
               : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
           }`}
         >
@@ -914,102 +591,6 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
         >
           Clear
         </button>
-        
-        {/*
-          FINISH AREA BUTTON — The canonical, reliable way to complete polygon drawing.
-          
-          WHY THIS BUTTON EXISTS (instead of relying on double-click):
-          - Double-click is unreliable across browsers and touch devices
-          - Double-click can be intercepted by map zoom handlers
-          - Users often don't discover double-click is needed
-          - This button provides explicit, visible, reliable completion
-          
-          The button appears once >= 3 vertices are placed (minimum for valid polygon).
-          Clicking it: validates the polygon, changes mode to simple_select, and triggers
-          geometry processing.
-        */}
-        {isDrawing && workZoneMode === "area" && drawingVertexCount >= 3 && (
-          <button
-            type="button"
-            onClick={() => {
-              console.log("[DRAW] Finish Area button clicked");
-              if (!drawRef.current) {
-                console.error("[DRAW] drawRef is null, cannot finish");
-                return;
-              }
-              
-              // Get the current feature being drawn
-              const features = drawRef.current.getAll();
-              if (features.features.length === 0) {
-                console.warn("[DRAW] No features found to finish");
-                setDrawingError("No polygon to finish. Please draw at least 3 points.");
-                return;
-              }
-              
-              const feature = features.features[0] as { 
-                geometry?: { type: string; coordinates?: number[][] | number[][][] } 
-              };
-              
-              // Validate we have enough points
-              let vertexCount = 0;
-              if (feature.geometry?.type === "Polygon" && feature.geometry.coordinates) {
-                vertexCount = (feature.geometry.coordinates[0] as number[][]).length;
-                // Adjust for closing point
-                if (vertexCount > 1) {
-                  const ring = feature.geometry.coordinates[0] as number[][];
-                  const first = ring[0];
-                  const last = ring[vertexCount - 1];
-                  if (first && last && first[0] === last[0] && first[1] === last[1]) {
-                    vertexCount -= 1;
-                  }
-                }
-              } else if (feature.geometry?.type === "LineString" && feature.geometry.coordinates) {
-                vertexCount = (feature.geometry.coordinates as number[][]).length;
-              }
-              
-              if (vertexCount < 3) {
-                console.warn(`[DRAW] Insufficient vertices: ${vertexCount}`);
-                setDrawingError("Need at least 3 points to create a polygon.");
-                return;
-              }
-              
-              console.log(`[DRAW] Finishing polygon with ${vertexCount} vertices`);
-              
-              // Clear timeout if still active
-              if (drawTimeoutRef.current) {
-                clearTimeout(drawTimeoutRef.current);
-                drawTimeoutRef.current = null;
-              }
-              
-              // Change mode to simple_select to finalize the polygon
-              // This triggers draw.create if the polygon is valid
-              drawRef.current.changeMode("simple_select");
-              
-              // Update state
-              setDebugDrawMode("simple_select");
-              setDebugLastEvent("finish_button");
-              setIsDrawing(false);
-              setDrawingVertexCount(0);
-              setDrawingError(null);
-              
-              // Re-enable map interactions
-              enableMapInteractions();
-              
-              // Process the completed geometry
-              processGeometry();
-            }}
-            className="px-4 py-2 text-sm font-bold rounded-md border-2 border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-600 transition-colors shadow-sm animate-pulse"
-          >
-            ✓ Finish Area
-          </button>
-        )}
-        
-        {/* Vertex count indicator */}
-        {isDrawing && workZoneMode === "area" && drawingVertexCount > 0 && (
-          <span className="text-xs font-mono text-slate-600 bg-slate-100 px-2 py-1 rounded border border-slate-200">
-            {drawingVertexCount} point{drawingVertexCount !== 1 ? "s" : ""}
-          </span>
-        )}
       </div>
 
       {/* Instructions */}
@@ -1024,120 +605,17 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
           {workZoneMode === "intersection" && (
             <p>✚ <strong>Click at the intersection</strong> center to define the work zone</p>
           )}
-          {workZoneMode === "area" && !drawingError && (
-            <p>
-              🔷 Click to add points. 
-              {drawingVertexCount < 3 && <> Need at least 3 points.</>}
-              {drawingVertexCount >= 3 && <strong> Click "Finish Area" to complete.</strong>}
-            </p>
+          {workZoneMode === "area" && (
+            <p>🔷 Click to add points. <strong>Double-click to finish</strong></p>
           )}
         </div>
       )}
-      
-      {/* Error message */}
-      {drawingError && (
-        <div className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-md border border-red-200 flex items-start gap-2">
-          <span className="text-lg">⚠️</span>
-          <p>{drawingError}</p>
-        </div>
-      )}
 
-      {/* Map container with DEV overlay */}
-      <div className="relative w-full h-[400px] rounded-lg border border-gray-300 overflow-hidden">
-        <div
-          ref={containerRef}
-          className="w-full h-full"
-        />
-        
-        {/* DEV-ONLY: Debug overlay for polygon drawing diagnostics */}
-        {IS_DEV && (
-          <div className="absolute top-2 left-2 bg-black/80 text-white text-[10px] font-mono p-2 rounded shadow-lg z-50 space-y-1 pointer-events-auto">
-            <div className="font-bold text-emerald-400 mb-1 border-b border-emerald-400/30 pb-1">
-              🔧 DRAW DEBUG (DEV)
-            </div>
-            
-            <div className="space-y-0.5">
-              <div>
-                <span className="text-slate-400">drawMode:</span>{" "}
-                <span className={debugDrawMode === "draw_polygon" ? "text-yellow-300 font-bold" : "text-white"}>
-                  {debugDrawMode}
-                </span>
-              </div>
-              
-              <div>
-                <span className="text-slate-400">isDrawing:</span>{" "}
-                <span className={isDrawing ? "text-emerald-300 font-bold" : "text-slate-400"}>
-                  {isDrawing ? "true" : "false"}
-                </span>
-              </div>
-              
-              <div>
-                <span className="text-slate-400">pointsPlaced:</span>{" "}
-                <span className="text-white">{drawingVertexCount}</span>
-              </div>
-              
-              <div>
-                <span className="text-slate-400">lastEvent:</span>{" "}
-                <span className="text-cyan-300">{debugLastEvent}</span>
-              </div>
-              
-              <div>
-                <span className="text-slate-400">interactionsDisabled:</span>{" "}
-                <span className={debugInteractionsDisabled ? "text-emerald-300 font-bold" : "text-red-300"}>
-                  {debugInteractionsDisabled ? "true" : "false"}
-                </span>
-              </div>
-              
-              <div>
-                <span className="text-slate-400">geocoderOpen:</span>{" "}
-                <span className="text-slate-500">
-                  {(() => {
-                    const geocoderInput = document.querySelector(".mapboxgl-ctrl-geocoder input");
-                    if (!geocoderInput) return "unknown";
-                    const isFocused = document.activeElement === geocoderInput;
-                    const hasValue = (geocoderInput as HTMLInputElement).value.length > 0;
-                    const isOpen = isFocused || hasValue;
-                    return isOpen ? "true" : "false";
-                  })()}
-                </span>
-              </div>
-            </div>
-            
-            {/* Map/Draw Ready Status */}
-            <div>
-              <span className="text-slate-400">ready:</span>{" "}
-              <span className={isMapDrawReady ? "text-emerald-300 font-bold" : "text-red-300"}>
-                {isMapDrawReady ? "true" : "false"}
-              </span>
-              <span className="text-slate-500 text-[8px] ml-1">({debugReadyStatus})</span>
-            </div>
-
-            {/* Force Draw Mode button */}
-            <button
-              type="button"
-              onClick={() => {
-                console.log("[DRAW] force-start from debug overlay");
-                handleStartDrawing();
-              }}
-              disabled={isDrawing}
-              className={`w-full mt-2 px-2 py-1 font-bold text-[9px] rounded transition-colors ${
-                isDrawing 
-                  ? "bg-slate-500 text-slate-300 cursor-not-allowed"
-                  : isMapDrawReady
-                    ? "bg-yellow-500 hover:bg-yellow-600 text-black"
-                    : "bg-orange-500 hover:bg-orange-600 text-white"
-              }`}
-            >
-              {isDrawing 
-                ? "Drawing..." 
-                : isMapDrawReady 
-                  ? "⚡ Force Draw Mode" 
-                  : "⏳ Force Draw (queued)"
-              }
-            </button>
-          </div>
-        )}
-      </div>
+      {/* Map container */}
+      <div
+        ref={containerRef}
+        className="w-full h-[400px] rounded-lg border border-gray-300 overflow-hidden"
+      />
 
       {/* Location label */}
       {locationLabel && (
