@@ -38,9 +38,23 @@ export function getDeviceIconSrc(type: DeviceType, subtype?: SignSubtype): strin
     return CONE_ICON_SRC;
   }
   if (type === "sign") {
-    return SIGN_ICON_SRC[subtype || "generic"] || SIGN_ICON_SRC.generic;
+    const src = SIGN_ICON_SRC[subtype || "generic"];
+    if (!src) {
+      console.warn(`[DeviceIcons] Unknown sign subtype: "${subtype}", using generic`);
+      return SIGN_ICON_SRC.generic;
+    }
+    return src;
   }
-  // Fallback for other device types - use generic warning
+  if (type === "drum" || type === "barricade") {
+    // Drums and barricades use cone-like styling
+    return CONE_ICON_SRC;
+  }
+  if (type === "arrowBoard" || type === "flagger") {
+    // Arrow boards and flaggers use sign-like styling
+    return SIGN_ICON_SRC.generic;
+  }
+  // UNKNOWN TYPE - this should never happen
+  console.error(`[DeviceIcons] Unknown device type: "${type}"`);
   return SIGN_ICON_SRC.generic;
 }
 
@@ -78,6 +92,16 @@ export function createDeviceMarkerElement(
   options: MarkerElementOptions = {}
 ): HTMLDivElement {
   const { selected = false, draggable = false, size = MARKER_SIZE } = options;
+  
+  // INVARIANT: Validate device type
+  if (!device.type) {
+    console.error(`[MarkerFactory] INVARIANT VIOLATION: device.type is undefined/null for device ${device.id}`);
+  }
+  
+  // INVARIANT: Sign must have subtype
+  if (device.type === "sign" && !device.subtype) {
+    console.warn(`[MarkerFactory] Sign device ${device.id} missing subtype, using "generic"`);
+  }
   
   // Get the icon source based on device type
   const iconSrc = getDeviceIconSrc(device.type, device.subtype);
