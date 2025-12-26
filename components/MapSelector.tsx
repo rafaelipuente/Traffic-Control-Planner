@@ -487,7 +487,8 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
         if (drawTimeoutRef.current) clearTimeout(drawTimeoutRef.current);
         drawTimeoutRef.current = setTimeout(() => {
           const features = draw.getAll();
-          const currentVertexCount = features.features[0]?.geometry.coordinates[0]?.length || 0;
+          const feature = features.features[0] as { geometry?: { coordinates?: number[][][] } } | undefined;
+          const currentVertexCount = feature?.geometry?.coordinates?.[0]?.length || 0;
           
           if (currentVertexCount === 0) {
             console.warn("[DRAW] No vertices placed after 5 seconds - clicks may not be registering");
@@ -497,16 +498,61 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
       }
     });
 
-    map.on("draw.selectionchange", (e: { features: unknown[] }) => {
-      console.log(`[DRAW] draw.selectionchange featureIds=[${e.features.map((f: {id?: string}) => f.id).join(", ")}]`);
+    map.on("draw.selectionchange", (e: { features: { id?: string }[] }) => {
+      console.log(`[DRAW] draw.selectionchange featureIds=[${e.features.map((f) => f.id).join(", ")}]`);
       setDebugLastEvent("selectionchange");
+    });
+
+    /**
+     * draw.render fires on every MapboxDraw render cycle.
+     * This is the ONLY reliable way to track vertex count during active polygon drawing,
+     * because draw.update only fires when features are modified AFTER creation.
+     * 
+     * During draw_polygon mode, we query the current draw state to count vertices.
+     */
+    map.on("draw.render", () => {
+      const mode = draw.getMode();
+      if (mode === "draw_polygon") {
+        const features = draw.getAll();
+        if (features.features.length > 0) {
+          const feature = features.features[0] as { geometry?: { type: string; coordinates?: number[][] | number[][][] } };
+          
+          // During drawing, the geometry might be a LineString (before closing) or Polygon
+          let vertexCount = 0;
+          if (feature.geometry?.type === "Polygon" && feature.geometry.coordinates) {
+            // Polygon: coordinates[0] is the outer ring
+            const ring = feature.geometry.coordinates[0] as number[][];
+            // Exclude the closing point if it matches the first point
+            vertexCount = ring.length;
+            if (vertexCount > 1) {
+              const first = ring[0];
+              const last = ring[vertexCount - 1];
+              if (first && last && first[0] === last[0] && first[1] === last[1]) {
+                vertexCount -= 1; // Don't count the duplicate closing point
+              }
+            }
+          } else if (feature.geometry?.type === "LineString" && feature.geometry.coordinates) {
+            // LineString during active drawing
+            vertexCount = (feature.geometry.coordinates as number[][]).length;
+          }
+          
+          setDrawingVertexCount(vertexCount);
+          
+          // Clear 5-second timeout once we have vertices
+          if (vertexCount > 0 && drawTimeoutRef.current) {
+            clearTimeout(drawTimeoutRef.current);
+            drawTimeoutRef.current = null;
+            setDrawingError(null);
+          }
+        }
+      }
     });
 
     map.on("draw.update", (e: { features: unknown[] }) => {
       const feature = e.features[0] as { geometry?: { coordinates?: number[][][] } };
       const points = feature?.geometry?.coordinates?.[0]?.length || 0;
       console.log(`[DRAW] draw.update points=${points}`);
-      setDrawingVertexCount(points > 0 ? points - 1 : 0); // -1 because last point is the closing point
+      // Vertex count is now tracked by draw.render, but we still log for debugging
       setDrawingError(null);
       setDebugLastEvent("update");
       processGeometry();
@@ -736,28 +782,92 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
           Clear
         </button>
         
-        {/* Finish button - appears after 3 points in polygon mode */}
+        {/*
+          FINISH AREA BUTTON — The canonical, reliable way to complete polygon drawing.
+          
+          WHY THIS BUTTON EXISTS (instead of relying on double-click):
+          - Double-click is unreliable across browsers and touch devices
+          - Double-click can be intercepted by map zoom handlers
+          - Users often don't discover double-click is needed
+          - This button provides explicit, visible, reliable completion
+          
+          The button appears once >= 3 vertices are placed (minimum for valid polygon).
+          Clicking it: validates the polygon, changes mode to simple_select, and triggers
+          geometry processing.
+        */}
         {isDrawing && workZoneMode === "area" && drawingVertexCount >= 3 && (
           <button
             type="button"
             onClick={() => {
-              console.log("[DRAW] Finish button clicked");
-              if (drawRef.current) {
-                // Get the current feature being drawn
-                const features = drawRef.current.getAll();
-                if (features.features.length > 0) {
-                  // Manually trigger completion by changing mode
-                  drawRef.current.changeMode("simple_select");
-                  setIsDrawing(false);
-                  setDrawingVertexCount(0);
-                  enableMapInteractions();
-                  processGeometry();
-                }
+              console.log("[DRAW] Finish Area button clicked");
+              if (!drawRef.current) {
+                console.error("[DRAW] drawRef is null, cannot finish");
+                return;
               }
+              
+              // Get the current feature being drawn
+              const features = drawRef.current.getAll();
+              if (features.features.length === 0) {
+                console.warn("[DRAW] No features found to finish");
+                setDrawingError("No polygon to finish. Please draw at least 3 points.");
+                return;
+              }
+              
+              const feature = features.features[0] as { 
+                geometry?: { type: string; coordinates?: number[][] | number[][][] } 
+              };
+              
+              // Validate we have enough points
+              let vertexCount = 0;
+              if (feature.geometry?.type === "Polygon" && feature.geometry.coordinates) {
+                vertexCount = (feature.geometry.coordinates[0] as number[][]).length;
+                // Adjust for closing point
+                if (vertexCount > 1) {
+                  const ring = feature.geometry.coordinates[0] as number[][];
+                  const first = ring[0];
+                  const last = ring[vertexCount - 1];
+                  if (first && last && first[0] === last[0] && first[1] === last[1]) {
+                    vertexCount -= 1;
+                  }
+                }
+              } else if (feature.geometry?.type === "LineString" && feature.geometry.coordinates) {
+                vertexCount = (feature.geometry.coordinates as number[][]).length;
+              }
+              
+              if (vertexCount < 3) {
+                console.warn(`[DRAW] Insufficient vertices: ${vertexCount}`);
+                setDrawingError("Need at least 3 points to create a polygon.");
+                return;
+              }
+              
+              console.log(`[DRAW] Finishing polygon with ${vertexCount} vertices`);
+              
+              // Clear timeout if still active
+              if (drawTimeoutRef.current) {
+                clearTimeout(drawTimeoutRef.current);
+                drawTimeoutRef.current = null;
+              }
+              
+              // Change mode to simple_select to finalize the polygon
+              // This triggers draw.create if the polygon is valid
+              drawRef.current.changeMode("simple_select");
+              
+              // Update state
+              setDebugDrawMode("simple_select");
+              setDebugLastEvent("finish_button");
+              setIsDrawing(false);
+              setDrawingVertexCount(0);
+              setDrawingError(null);
+              
+              // Re-enable map interactions
+              enableMapInteractions();
+              
+              // Process the completed geometry
+              processGeometry();
             }}
             className="px-4 py-2 text-sm font-bold rounded-md border-2 border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-600 transition-colors shadow-sm animate-pulse"
           >
-            ✓ Finish Polygon
+            ✓ Finish Area
           </button>
         )}
         
@@ -785,7 +895,7 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
             <p>
               🔷 Click to add points. 
               {drawingVertexCount < 3 && <> Need at least 3 points.</>}
-              {drawingVertexCount >= 3 && <strong> Double-click or click "Finish Polygon" to complete.</strong>}
+              {drawingVertexCount >= 3 && <strong> Click "Finish Area" to complete.</strong>}
             </p>
           )}
         </div>
