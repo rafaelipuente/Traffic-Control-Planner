@@ -1,10 +1,14 @@
 /**
- * Street-Aware Layout Suggestion Engine (Phase 2.1)
+ * Street-Aware Layout Suggestion Engine (Phase 2.1 + Rules-Driven)
  * 
  * Generates TCP device placement aligned to REAL streets when road centerline
  * data is available (via queryRenderedFeatures). Signs are placed on the correct
  * shoulder (left/right) relative to traffic direction and the work zone.
  * Falls back to polygon-axis method when no road data is provided.
+ * 
+ * IMPORTANT: All spacing/distance values are now derived from the TCP Rules Pack
+ * (src/rules/tcpRulesPack.v1.json) via resolveTcpRules(). This ensures MUTCD compliance
+ * and eliminates heuristic guessing.
  */
 
 import {
@@ -16,6 +20,12 @@ import {
   SIGN_LABELS,
   RoadPolyline,
 } from "../layoutTypes";
+
+import {
+  resolveTcpRules,
+  ResolvedTcpRules,
+  OperationType,
+} from "@/src/rules/resolveTcpRules";
 
 // ============================================
 // CONSTANTS
@@ -39,8 +49,11 @@ const MAX_SIGN_ROAD_DISTANCE_M = 15;
 /** Debug mode flag - set to true to enable debug overlays in dev */
 export const DEBUG_LAYOUT = false;
 
-/** Speed-based spacing in feet */
-const SPEED_CONFIG: Record<number, { signSpacingFt: number[]; taperLengthFt: number; coneSpacingFt: number }> = {
+/** 
+ * LEGACY: Speed-based spacing in feet (DEPRECATED - now using rules resolver)
+ * Kept as fallback if rules resolution fails
+ */
+const LEGACY_SPEED_CONFIG: Record<number, { signSpacingFt: number[]; taperLengthFt: number; coneSpacingFt: number }> = {
   25: { signSpacingFt: [100, 200, 300], taperLengthFt: 100, coneSpacingFt: 15 },
   30: { signSpacingFt: [100, 200, 300], taperLengthFt: 120, coneSpacingFt: 15 },
   35: { signSpacingFt: [150, 300, 450], taperLengthFt: 175, coneSpacingFt: 17 },
@@ -619,10 +632,112 @@ function deriveFallbackAxis(ring: number[][]): FallbackAxis {
 // DEVICE PLACEMENT
 // ============================================
 
-function getSpeedConfig(speedMph: number): { signSpacingFt: number[]; taperLengthFt: number; coneSpacingFt: number } {
+/** Config derived from rules pack for current job */
+interface LayoutConfig {
+  signSpacingFt: number[];
+  taperLengthFt: number;
+  coneSpacingFt: number;
+  bufferLengthFt: number;
+  drumsRequired: boolean;
+  requiredSigns: string[];
+}
+
+/** Global cache for last resolved rules (for debugging) */
+let _lastResolvedRules: ResolvedTcpRules | null = null;
+
+/**
+ * Get the last resolved rules (for debugging/QA)
+ */
+export function getLastResolvedRules(): ResolvedTcpRules | null {
+  return _lastResolvedRules;
+}
+
+/**
+ * LEGACY fallback: Get speed config from hardcoded table
+ * Only used when rules resolution fails
+ */
+function getLegacySpeedConfig(speedMph: number): LayoutConfig {
   const clamped = Math.max(25, Math.min(65, speedMph));
   const rounded = Math.round(clamped / 5) * 5;
-  return SPEED_CONFIG[rounded] || SPEED_CONFIG[35];
+  const legacy = LEGACY_SPEED_CONFIG[rounded] || LEGACY_SPEED_CONFIG[35];
+  
+  console.warn("[RULES_FALLBACK] Using legacy spacing logic");
+  
+  return {
+    signSpacingFt: legacy.signSpacingFt,
+    taperLengthFt: legacy.taperLengthFt,
+    coneSpacingFt: legacy.coneSpacingFt,
+    bufferLengthFt: 50,
+    drumsRequired: speedMph >= 35,
+    requiredSigns: ["ROAD_WORK_AHEAD", "BE_PREPARED_TO_STOP"],
+  };
+}
+
+/**
+ * Get layout config using the TCP Rules Pack
+ * 
+ * This is now the PRIMARY source of truth for all spacing values.
+ * Falls back to legacy config only if rules resolution throws.
+ */
+function getLayoutConfig(
+  speedMph: number,
+  workType?: string
+): LayoutConfig {
+  try {
+    // Map workType to operation type for rules resolution
+    const operation: OperationType = mapWorkTypeToOperation(workType);
+    
+    // Resolve rules from the rules pack
+    const resolved = resolveTcpRules({
+      speedMph,
+      laneWidthFt: 12, // Default lane width
+      operation,
+      timeOfDay: "day", // Default to day (could be made configurable)
+    });
+    
+    // Cache for debugging
+    _lastResolvedRules = resolved;
+    
+    // Convert single spacing to array (signs at 1x, 2x, 3x spacing)
+    const signSpacingFt = [
+      resolved.signSpacingFt,
+      resolved.signSpacingFt * 2,
+      resolved.signSpacingFt * 3,
+    ];
+    
+    return {
+      signSpacingFt,
+      taperLengthFt: resolved.taperLengthFt,
+      coneSpacingFt: resolved.coneSpacingFt,
+      bufferLengthFt: resolved.bufferLengthFt,
+      drumsRequired: resolved.drumsRequired,
+      requiredSigns: resolved.requiredSigns,
+    };
+  } catch (error) {
+    console.error("[RULES_ERROR] Failed to resolve TCP rules:", error);
+    return getLegacySpeedConfig(speedMph);
+  }
+}
+
+/**
+ * Map workType string to OperationType for rules resolution
+ */
+function mapWorkTypeToOperation(workType?: string): OperationType {
+  switch (workType) {
+    case "lane_closure":
+      return "lane_closure";
+    case "lane_shift":
+      return "lane_shift";
+    case "one_lane_two_way_flaggers":
+    case "flagging":
+      return "flagging";
+    case "shoulder_work":
+      return "shoulder_work";
+    case "full_closure":
+      return "full_closure";
+    default:
+      return "lane_closure"; // Default operation type
+  }
 }
 
 function isTooCloseToExisting(pos: Point, existingDevices: FieldDevice[], minSpacing: number): boolean {
@@ -946,12 +1061,13 @@ function placeArrowBoard(entryPoint: Point, upstreamBearing: number, polygonRing
 /**
  * Generate a suggested field layout for a work zone
  * 
- * Phase 2.1 Algorithm (Fixed):
- * 1. If roadCenterlines provided, select dominant road near polygon
- * 2. Determine upstream direction and shoulder side (left/right)
- * 3. Place signs along road with shoulder offset
- * 4. Place cones as boundary-aligned taper
- * 5. Validate all placements (inside/outside rules, road proximity, anti-stacking)
+ * Phase 2.1 Algorithm (Rules-Driven):
+ * 1. Resolve placement rules from TCP Rules Pack (MUTCD/TTCM compliant)
+ * 2. If roadCenterlines provided, select dominant road near polygon
+ * 3. Determine upstream direction and shoulder side (left/right)
+ * 4. Place signs along road with shoulder offset using resolved sign spacing
+ * 5. Place cones as boundary-aligned taper using resolved taper length and cone spacing
+ * 6. Validate all placements (inside/outside rules, road proximity, anti-stacking)
  */
 export function suggestFieldLayout(input: LayoutSuggestionInput): FieldLayout {
   const {
@@ -969,7 +1085,17 @@ export function suggestFieldLayout(input: LayoutSuggestionInput): FieldLayout {
   
   const now = new Date().toISOString();
   const devices: FieldDevice[] = [];
-  const config = getSpeedConfig(postedSpeedMph);
+  
+  // Get layout config from TCP Rules Pack (primary) or legacy fallback
+  const config = getLayoutConfig(postedSpeedMph, workType);
+  
+  // Log the rules being used for debugging/QA
+  console.log(
+    `[LAYOUT] Using rules-based config: signSpacing=${config.signSpacingFt[0]}ft ` +
+    `taper=${config.taperLengthFt}ft coneSpacing=${config.coneSpacingFt}ft ` +
+    `drums=${config.drumsRequired} signs=[${config.requiredSigns.join(",")}]`
+  );
+  
   const centroid: Point = [inputCentroid.lng, inputCentroid.lat];
   
   // Try to select dominant road
