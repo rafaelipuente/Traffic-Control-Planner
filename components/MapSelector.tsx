@@ -168,6 +168,13 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
   const [drawingVertexCount, setDrawingVertexCount] = useState(0);
   const [drawingError, setDrawingError] = useState<string | null>(null);
 
+  // DEV-ONLY: Debug state for polygon drawing diagnostics
+  const [debugDrawMode, setDebugDrawMode] = useState<string>("simple_select");
+  const [debugLastEvent, setDebugLastEvent] = useState<string>("none");
+  const [debugInteractionsDisabled, setDebugInteractionsDisabled] = useState(false);
+
+  const IS_DEV = process.env.NODE_ENV !== "production";
+
   // Keep ref in sync with state for use in callbacks
   useEffect(() => {
     locationLabelRef.current = locationLabel;
@@ -190,6 +197,8 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
     map.boxZoom.disable();
     map.keyboard.disable();
     map.touchZoomRotate.disable();
+    
+    setDebugInteractionsDisabled(true);
   }, []);
 
   /**
@@ -207,6 +216,8 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
     map.boxZoom.enable();
     map.keyboard.enable();
     map.touchZoomRotate.enable();
+    
+    setDebugInteractionsDisabled(false);
   }, []);
 
   const clearClickMarkers = useCallback(() => {
@@ -465,6 +476,8 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
     
     map.on("draw.modechange", (e: { mode: string }) => {
       console.log(`[DRAW] draw.modechange mode=${e.mode}`);
+      setDebugDrawMode(e.mode);
+      setDebugLastEvent("modechange");
       
       if (e.mode === "draw_polygon") {
         setDrawingVertexCount(0);
@@ -486,6 +499,7 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
 
     map.on("draw.selectionchange", (e: { features: unknown[] }) => {
       console.log(`[DRAW] draw.selectionchange featureIds=[${e.features.map((f: {id?: string}) => f.id).join(", ")}]`);
+      setDebugLastEvent("selectionchange");
     });
 
     map.on("draw.update", (e: { features: unknown[] }) => {
@@ -494,6 +508,7 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
       console.log(`[DRAW] draw.update points=${points}`);
       setDrawingVertexCount(points > 0 ? points - 1 : 0); // -1 because last point is the closing point
       setDrawingError(null);
+      setDebugLastEvent("update");
       processGeometry();
     });
 
@@ -501,6 +516,7 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
       const feature = e.features[0] as { id?: string; geometry?: { coordinates?: number[][][] } };
       const points = feature?.geometry?.coordinates?.[0]?.length || 0;
       console.log(`[DRAW] draw.create id=${feature.id} points=${points}`);
+      setDebugLastEvent("create");
       
       // Clear timeout
       if (drawTimeoutRef.current) {
@@ -525,6 +541,7 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
 
     map.on("draw.delete", (e: { features: unknown[] }) => {
       console.log(`[DRAW] draw.delete count=${e.features.length}`);
+      setDebugLastEvent("delete");
       processGeometry();
     });
 
@@ -593,10 +610,11 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
         disableMapInteractions(); // CRITICAL: Disable map interactions so clicks go to draw control
         drawRef.current.changeMode("draw_polygon");
         
-        // Log the mode after changing
+        // Log the mode after changing and update debug state
         setTimeout(() => {
           const mode = drawRef.current?.getMode();
           console.log(`[DRAW] mode=${mode} after changeMode`);
+          setDebugDrawMode(mode || "unknown");
         }, 100);
       }
     }
@@ -619,6 +637,8 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
     setIsDrawing(false);
     setDrawingVertexCount(0);
     setDrawingError(null);
+    setDebugDrawMode("simple_select");
+    setDebugLastEvent("clear");
     
     // Clear any pending timeout
     if (drawTimeoutRef.current) {
@@ -779,11 +799,84 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
         </div>
       )}
 
-      {/* Map container */}
-      <div
-        ref={containerRef}
-        className="w-full h-[400px] rounded-lg border border-gray-300 overflow-hidden"
-      />
+      {/* Map container with DEV overlay */}
+      <div className="relative w-full h-[400px] rounded-lg border border-gray-300 overflow-hidden">
+        <div
+          ref={containerRef}
+          className="w-full h-full"
+        />
+        
+        {/* DEV-ONLY: Debug overlay for polygon drawing diagnostics */}
+        {IS_DEV && (
+          <div className="absolute top-2 left-2 bg-black/80 text-white text-[10px] font-mono p-2 rounded shadow-lg z-50 space-y-1 pointer-events-auto">
+            <div className="font-bold text-emerald-400 mb-1 border-b border-emerald-400/30 pb-1">
+              🔧 DRAW DEBUG (DEV)
+            </div>
+            
+            <div className="space-y-0.5">
+              <div>
+                <span className="text-slate-400">drawMode:</span>{" "}
+                <span className={debugDrawMode === "draw_polygon" ? "text-yellow-300 font-bold" : "text-white"}>
+                  {debugDrawMode}
+                </span>
+              </div>
+              
+              <div>
+                <span className="text-slate-400">isDrawing:</span>{" "}
+                <span className={isDrawing ? "text-emerald-300 font-bold" : "text-slate-400"}>
+                  {isDrawing ? "true" : "false"}
+                </span>
+              </div>
+              
+              <div>
+                <span className="text-slate-400">pointsPlaced:</span>{" "}
+                <span className="text-white">{drawingVertexCount}</span>
+              </div>
+              
+              <div>
+                <span className="text-slate-400">lastEvent:</span>{" "}
+                <span className="text-cyan-300">{debugLastEvent}</span>
+              </div>
+              
+              <div>
+                <span className="text-slate-400">interactionsDisabled:</span>{" "}
+                <span className={debugInteractionsDisabled ? "text-emerald-300 font-bold" : "text-red-300"}>
+                  {debugInteractionsDisabled ? "true" : "false"}
+                </span>
+              </div>
+              
+              <div>
+                <span className="text-slate-400">geocoderOpen:</span>{" "}
+                <span className="text-slate-500">
+                  {(() => {
+                    const geocoderInput = document.querySelector(".mapboxgl-ctrl-geocoder input");
+                    if (!geocoderInput) return "unknown";
+                    const isFocused = document.activeElement === geocoderInput;
+                    const hasValue = (geocoderInput as HTMLInputElement).value.length > 0;
+                    const isOpen = isFocused || hasValue;
+                    return isOpen ? "true" : "false";
+                  })()}
+                </span>
+              </div>
+            </div>
+            
+            {/* Force Draw Mode button */}
+            <button
+              type="button"
+              onClick={() => {
+                console.log("[DRAW] force-start from debug overlay");
+                if (workZoneMode !== "area") {
+                  setWorkZoneMode("area");
+                }
+                handleStartDrawing();
+              }}
+              className="w-full mt-2 px-2 py-1 bg-yellow-500 hover:bg-yellow-600 text-black font-bold text-[9px] rounded transition-colors"
+            >
+              ⚡ Force Draw Mode
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Location label */}
       {locationLabel && (
