@@ -1,0 +1,700 @@
+{
+  "version": "1.0",
+  "generatedAt": "2025-12-25T00:00:00Z",
+  "sources": {
+    "primary": [
+      "tcp handbooks/2025-TTCM_portland.pdf",
+      "tcp handbooks/mutcd11thedition.pdf"
+    ],
+    "supplemental": [
+      "tcp handbooks/bpguidebook.pdf"
+    ]
+  },
+
+  "signs": {
+    "definitions": {
+      "ROAD_WORK_AHEAD": {
+        "code": "ROAD_WORK_AHEAD",
+        "mutcdCode": "W20-1",
+        "label": "Road Work Ahead",
+        "category": "warning",
+        "sizesInches": [36, 48],
+        "description": "Advance warning sign placed upstream of work zone"
+      },
+      "BE_PREPARED_TO_STOP": {
+        "code": "BE_PREPARED_TO_STOP",
+        "mutcdCode": "W3-4",
+        "label": "Be Prepared To Stop",
+        "category": "warning",
+        "sizesInches": [36, 48],
+        "description": "Warning for potential stopping requirement ahead"
+      },
+      "FLAGGER_AHEAD": {
+        "code": "FLAGGER_AHEAD",
+        "mutcdCode": "CW23-2",
+        "label": "Flagger Ahead",
+        "category": "warning",
+        "sizesInches": [36, 48],
+        "description": "Warning of flagger station ahead. Note: CW23-2 preferred over W20-7a per TTCM Portland"
+      },
+      "RIGHT_LANE_CLOSED": {
+        "code": "RIGHT_LANE_CLOSED",
+        "mutcdCode": "W20-5R",
+        "label": "Right Lane Closed",
+        "category": "warning",
+        "sizesInches": [36, 48],
+        "description": "Warning of right lane closure ahead"
+      },
+      "LEFT_LANE_CLOSED": {
+        "code": "LEFT_LANE_CLOSED",
+        "mutcdCode": "W20-5L",
+        "label": "Left Lane Closed",
+        "category": "warning",
+        "sizesInches": [36, 48],
+        "description": "Warning of left lane closure ahead"
+      },
+      "ONE_LANE_ROAD": {
+        "code": "ONE_LANE_ROAD",
+        "mutcdCode": "W20-4",
+        "label": "One Lane Road Ahead",
+        "category": "warning",
+        "sizesInches": [36, 48],
+        "description": "Warning of road narrowing to single lane"
+      },
+      "WORKERS_AHEAD": {
+        "code": "WORKERS_AHEAD",
+        "mutcdCode": "W21-1",
+        "label": "Workers Ahead",
+        "category": "warning",
+        "sizesInches": [36, 48],
+        "description": "Warning of workers in or near roadway"
+      },
+      "END_ROAD_WORK": {
+        "code": "END_ROAD_WORK",
+        "mutcdCode": "G20-2",
+        "label": "End Road Work",
+        "category": "guide",
+        "sizesInches": [36, 48],
+        "description": "Indicates end of work zone"
+      },
+      "DETOUR": {
+        "code": "DETOUR",
+        "mutcdCode": "M4-8",
+        "label": "Detour",
+        "category": "guide",
+        "sizesInches": [36, 48],
+        "description": "Detour route indicator"
+      },
+      "ROAD_CLOSED": {
+        "code": "ROAD_CLOSED",
+        "mutcdCode": "R11-2",
+        "label": "Road Closed",
+        "category": "regulatory",
+        "sizesInches": [36, 48],
+        "description": "Road closure regulatory sign"
+      }
+    }
+  },
+
+  "workZoneConfigurations": {
+    "ROAD_SEGMENT": {
+      "workZoneType": "ROAD_SEGMENT",
+      "requiredSigns": ["ROAD_WORK_AHEAD"],
+      "optionalSigns": ["BE_PREPARED_TO_STOP", "WORKERS_AHEAD", "END_ROAD_WORK"],
+      "signOrder": ["ROAD_WORK_AHEAD", "BE_PREPARED_TO_STOP", "WORKERS_AHEAD"],
+      "minAdvanceWarningDistance_ft": 100,
+      "requiresFlaggers": false,
+      "requiresArrowBoard": false,
+      "specialConditions": [
+        "Additional ROAD WORK AHEAD (W20-1) and BE PREPARED TO STOP signing upstream if extended queues develop"
+      ],
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "28",
+        "sectionTitle": "3.5 Flagging Signs & Equipment"
+      }
+    },
+    "INTERSECTION": {
+      "workZoneType": "INTERSECTION",
+      "requiredSigns": ["ROAD_WORK_AHEAD"],
+      "optionalSigns": ["BE_PREPARED_TO_STOP", "FLAGGER_AHEAD"],
+      "signOrder": ["ROAD_WORK_AHEAD", "BE_PREPARED_TO_STOP", "FLAGGER_AHEAD"],
+      "minAdvanceWarningDistance_ft": 100,
+      "requiresFlaggers": true,
+      "requiresArrowBoard": false,
+      "specialConditions": [
+        "One flagger per approach recommended",
+        "One flagger per movement on approach if multiple lanes",
+        "Conflicting regulatory signs (STOP, YIELD) shall be covered"
+      ],
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "28-29",
+        "sectionTitle": "3.6 Flagging Through Intersections"
+      }
+    },
+    "LANE_CLOSURE": {
+      "workZoneType": "LANE_CLOSURE",
+      "requiredSigns": ["ROAD_WORK_AHEAD", "RIGHT_LANE_CLOSED"],
+      "optionalSigns": ["BE_PREPARED_TO_STOP", "WORKERS_AHEAD"],
+      "signOrder": ["ROAD_WORK_AHEAD", "RIGHT_LANE_CLOSED", "BE_PREPARED_TO_STOP"],
+      "minAdvanceWarningDistance_ft": 100,
+      "requiresFlaggers": false,
+      "requiresArrowBoard": true,
+      "specialConditions": [
+        "Arrow board required for overnight lane closure at 30mph+",
+        "Drums required in merge taper for overnight closure at 30mph+",
+        "Do not use arrow board for lane shift, only closure"
+      ],
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "22-23",
+        "sectionTitle": "2.7.3 Arrow Boards"
+      }
+    },
+    "FULL_CLOSURE": {
+      "workZoneType": "FULL_CLOSURE",
+      "requiredSigns": ["ROAD_WORK_AHEAD", "ROAD_CLOSED", "DETOUR"],
+      "optionalSigns": ["BE_PREPARED_TO_STOP"],
+      "signOrder": ["ROAD_WORK_AHEAD", "ROAD_CLOSED", "DETOUR"],
+      "minAdvanceWarningDistance_ft": 200,
+      "requiresFlaggers": true,
+      "requiresArrowBoard": false,
+      "specialConditions": [
+        "Detour signs shall have street name rider plaques",
+        "Include advance detour signs (NEXT LEFT, DETOUR RIGHT)"
+      ],
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "42",
+        "sectionTitle": "4.7 Lane Closures and Detours"
+      }
+    },
+    "SHOULDER_WORK": {
+      "workZoneType": "SHOULDER_WORK",
+      "requiredSigns": ["ROAD_WORK_AHEAD"],
+      "optionalSigns": ["WORKERS_AHEAD"],
+      "signOrder": ["ROAD_WORK_AHEAD", "WORKERS_AHEAD"],
+      "minAdvanceWarningDistance_ft": 100,
+      "requiresFlaggers": false,
+      "requiresArrowBoard": false,
+      "specialConditions": [],
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "sectionTitle": "4.1 General Design Considerations"
+      }
+    },
+    "MOBILE": {
+      "workZoneType": "MOBILE",
+      "requiredSigns": [],
+      "optionalSigns": ["ROAD_WORK_AHEAD"],
+      "signOrder": ["ROAD_WORK_AHEAD"],
+      "minAdvanceWarningDistance_ft": 50,
+      "requiresFlaggers": false,
+      "requiresArrowBoard": false,
+      "specialConditions": [
+        "Up to 15 min: vehicle hazard lights + one beacon",
+        "16-60 min: short taper (6 cones, 50ft), beacon, one advance warning sign",
+        "Any duration lane closure on high-speed: TMA + truck-mounted arrow board"
+      ],
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "33-34",
+        "sectionTitle": "4.1.7 Mobile Work"
+      }
+    }
+  },
+
+  "spacing": {
+    "formula": {
+      "signSpacing": "Per MUTCD Table 6H-3, varies by road type and speed",
+      "coneSpacing": "Max spacing = S feet, where S = speed in mph. Reduced to ½S when conflicting with pavement markings.",
+      "taperLength": "L = W × S for speeds ≤40mph; L = W × S²/60 for speeds >40mph (where W=lane width, S=speed)"
+    },
+    "bySpeedMph": {
+      "25": {
+        "speedMph": 25,
+        "signSpacing_ft": 100,
+        "coneSpacing_ft": 25,
+        "taperLength_ft": 75,
+        "bufferLength_ft": 50,
+        "source": {
+          "sourcePdf": "2025-TTCM_portland.pdf",
+          "sectionTitle": "2.3 Channelizing Devices",
+          "notes": "Cone spacing = S feet max; taper = W×S for ≤40mph with W=3ft lane offset"
+        }
+      },
+      "30": {
+        "speedMph": 30,
+        "signSpacing_ft": 100,
+        "coneSpacing_ft": 15,
+        "taperLength_ft": 90,
+        "bufferLength_ft": 75,
+        "source": {
+          "sourcePdf": "2025-TTCM_portland.pdf",
+          "sectionTitle": "2.3 Channelizing Devices",
+          "notes": "Reduced to ½S (15ft) when conflicting with pavement markings"
+        }
+      },
+      "35": {
+        "speedMph": 35,
+        "signSpacing_ft": 200,
+        "coneSpacing_ft": 35,
+        "taperLength_ft": 180,
+        "bufferLength_ft": 100,
+        "source": {
+          "sourcePdf": "2025-TTCM_portland.pdf",
+          "sectionTitle": "2.3 Channelizing Devices",
+          "notes": "High-speed street threshold (35mph+). Drums required for merge tapers."
+        }
+      },
+      "40": {
+        "speedMph": 40,
+        "signSpacing_ft": 350,
+        "coneSpacing_ft": 40,
+        "taperLength_ft": 240,
+        "bufferLength_ft": 150,
+        "source": {
+          "sourcePdf": "mutcd11thedition.pdf",
+          "mutcdSection": "Table 6H-3",
+          "notes": "Transition speed for taper formula change"
+        }
+      },
+      "45": {
+        "speedMph": 45,
+        "signSpacing_ft": 350,
+        "coneSpacing_ft": 45,
+        "taperLength_ft": 405,
+        "bufferLength_ft": 200,
+        "source": {
+          "sourcePdf": "mutcd11thedition.pdf",
+          "mutcdSection": "Table 6H-3",
+          "notes": "L = W × S²/60 formula applies (12ft lane × 45² / 60 = 405ft)"
+        }
+      },
+      "50": {
+        "speedMph": 50,
+        "signSpacing_ft": 500,
+        "coneSpacing_ft": 50,
+        "taperLength_ft": 500,
+        "bufferLength_ft": 250,
+        "source": {
+          "sourcePdf": "mutcd11thedition.pdf",
+          "mutcdSection": "Table 6H-3",
+          "notes": "L = W × S²/60 formula (12ft × 50² / 60 = 500ft)"
+        }
+      },
+      "55": {
+        "speedMph": 55,
+        "signSpacing_ft": 500,
+        "coneSpacing_ft": 55,
+        "taperLength_ft": 605,
+        "bufferLength_ft": 300,
+        "source": {
+          "sourcePdf": "mutcd11thedition.pdf",
+          "mutcdSection": "Table 6H-3",
+          "notes": "L = W × S²/60 formula (12ft × 55² / 60 = 605ft)"
+        }
+      }
+    }
+  },
+
+  "taper": {
+    "laneClosure": {
+      "formula": "L = W × S (for S ≤ 40mph); L = W × S²/60 (for S > 40mph)",
+      "formulaDescription": "L = taper length in feet, W = lane width (typically 12ft), S = speed limit in mph",
+      "bySpeedMph": {
+        "25": {
+          "length_ft": 75,
+          "coneSpacing_ft": 20,
+          "drumRequired": false,
+          "source": {
+            "sourcePdf": "2025-TTCM_portland.pdf",
+            "sectionTitle": "Typical Applications"
+          }
+        },
+        "30": {
+          "length_ft": 120,
+          "coneSpacing_ft": 20,
+          "drumRequired": false,
+          "source": {
+            "sourcePdf": "2025-TTCM_portland.pdf",
+            "sectionTitle": "2.3.3 Plastic Drums",
+            "notes": "Drums required for overnight closures at 30mph+"
+          }
+        },
+        "35": {
+          "length_ft": 180,
+          "coneSpacing_ft": 20,
+          "drumRequired": true,
+          "source": {
+            "sourcePdf": "2025-TTCM_portland.pdf",
+            "page": "17",
+            "sectionTitle": "2.3.3 Plastic Drums"
+          }
+        },
+        "40": {
+          "length_ft": 240,
+          "coneSpacing_ft": 20,
+          "drumRequired": true,
+          "source": {
+            "sourcePdf": "mutcd11thedition.pdf",
+            "mutcdSection": "6C.08"
+          }
+        },
+        "45": {
+          "length_ft": 405,
+          "coneSpacing_ft": 20,
+          "drumRequired": true,
+          "source": {
+            "sourcePdf": "mutcd11thedition.pdf",
+            "mutcdSection": "6C.08"
+          }
+        }
+      }
+    },
+    "laneShift": {
+      "formula": "L = W × S (for S ≤ 40mph); L = W × S²/60 (for S > 40mph)",
+      "formulaDescription": "Same as lane closure taper, applied to lateral shift distance",
+      "bySpeedMph": {
+        "25": {
+          "length_ft": 75,
+          "coneSpacing_ft": 20,
+          "drumRequired": false,
+          "source": {
+            "sourcePdf": "mutcd11thedition.pdf",
+            "mutcdSection": "6C.08"
+          }
+        },
+        "35": {
+          "length_ft": 180,
+          "coneSpacing_ft": 20,
+          "drumRequired": false,
+          "source": {
+            "sourcePdf": "mutcd11thedition.pdf",
+            "mutcdSection": "6C.08"
+          }
+        }
+      }
+    },
+    "merging": {
+      "formula": "L = W × S (for S ≤ 40mph); L = W × S²/60 (for S > 40mph)",
+      "formulaDescription": "Merging taper for lane drops",
+      "bySpeedMph": {
+        "25": {
+          "length_ft": 75,
+          "coneSpacing_ft": 20,
+          "drumRequired": false,
+          "source": {
+            "sourcePdf": "mutcd11thedition.pdf",
+            "mutcdSection": "6C.08"
+          }
+        },
+        "35": {
+          "length_ft": 180,
+          "coneSpacing_ft": 20,
+          "drumRequired": true,
+          "source": {
+            "sourcePdf": "2025-TTCM_portland.pdf",
+            "page": "17",
+            "sectionTitle": "2.3.3 Plastic Drums"
+          }
+        }
+      }
+    }
+  },
+
+  "devices": {
+    "cones": {
+      "busyStreet": {
+        "minHeight_in": 28,
+        "reflective": true,
+        "weightedBase": true,
+        "conditions": "Required for busy streets (with lane markings or transit routes)",
+        "source": {
+          "sourcePdf": "2025-TTCM_portland.pdf",
+          "page": "17",
+          "sectionTitle": "2.3.2 Cones"
+        }
+      },
+      "lowClassificationDaylight": {
+        "minHeight_in": 18,
+        "reflective": false,
+        "weightedBase": true,
+        "conditions": "Lower classification streets during daylight only",
+        "source": {
+          "sourcePdf": "2025-TTCM_portland.pdf",
+          "page": "17",
+          "sectionTitle": "2.3.2 Cones"
+        }
+      },
+      "night": {
+        "minHeight_in": 28,
+        "reflective": true,
+        "weightedBase": true,
+        "conditions": "All night operations",
+        "source": {
+          "sourcePdf": "2025-TTCM_portland.pdf",
+          "page": "17",
+          "sectionTitle": "2.3.2 Cones"
+        }
+      }
+    },
+    "drums": {
+      "required": true,
+      "conditions": "Required for merge tapers on high-speed streets (35mph+) and overnight lane closures at 30mph+",
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "17",
+        "sectionTitle": "2.3.3 Plastic Drums (Barrels)"
+      }
+    }
+  },
+
+  "constraints": [
+    {
+      "id": "SIGN_OUTSIDE_WORK_ZONE",
+      "description": "Warning signs must be placed upstream of and outside the active work zone",
+      "requirement": "SHALL",
+      "enforcementLevel": "hard",
+      "validationRule": "sign.position !== 'inside_work_zone'",
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "sectionTitle": "2.2 Signs"
+      }
+    },
+    {
+      "id": "SIGN_CLEAR_OF_BIKE_LANE",
+      "description": "Signs should not restrict bike lanes or sidewalks to less than 4 feet in width",
+      "requirement": "SHOULD",
+      "enforcementLevel": "soft",
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "14",
+        "sectionTitle": "2.2 Signs"
+      }
+    },
+    {
+      "id": "48_INCH_SIGN_HIGH_SPEED_ONLY",
+      "description": "48-inch warning signs are typically prohibited except on high-speed streets (35mph+)",
+      "requirement": "SHOULD",
+      "enforcementLevel": "soft",
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "14",
+        "sectionTitle": "2.2 Signs"
+      }
+    },
+    {
+      "id": "CONES_NOT_UNOCCUPIED",
+      "description": "Cones should not be used in unoccupied work sites as they are prone to move in high wind",
+      "requirement": "SHOULD",
+      "enforcementLevel": "soft",
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "17",
+        "sectionTitle": "2.3.2 Cones"
+      }
+    },
+    {
+      "id": "CONES_NOT_FOR_PEDESTRIANS",
+      "description": "Cones shall not be used for pedestrian channelization nor to protect pedestrians from work areas",
+      "requirement": "SHALL",
+      "enforcementLevel": "hard",
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "17",
+        "sectionTitle": "2.3.2 Cones"
+      }
+    },
+    {
+      "id": "PARKING_CLEARANCE_30MPH",
+      "description": "Remove 20 feet of parking in front of sign on streets with operating speed ≤30mph",
+      "requirement": "SHOULD",
+      "enforcementLevel": "soft",
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "15",
+        "sectionTitle": "2.2 Signs"
+      }
+    },
+    {
+      "id": "PARKING_CLEARANCE_35MPH",
+      "description": "Remove 40 feet of parking in front of sign on streets with operating speed ≥35mph",
+      "requirement": "SHOULD",
+      "enforcementLevel": "soft",
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "15",
+        "sectionTitle": "2.2 Signs"
+      }
+    },
+    {
+      "id": "TWO_SIDED_SIGNS_ONE_WAY",
+      "description": "On one-way streets with two or more lanes, signs should be used on both left and right sides",
+      "requirement": "SHOULD",
+      "enforcementLevel": "soft",
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "15",
+        "sectionTitle": "2.2 Signs"
+      }
+    },
+    {
+      "id": "MIN_LANE_WIDTH",
+      "description": "Motorized vehicle travel lanes should be maintained to 10 feet minimum",
+      "requirement": "SHOULD",
+      "enforcementLevel": "soft",
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "31",
+        "sectionTitle": "4.1.4 Lane Requirements"
+      }
+    },
+    {
+      "id": "FIRE_APPARATUS_WIDTH",
+      "description": "Fire apparatus require minimum 11 feet to travel through work zone",
+      "requirement": "SHALL",
+      "enforcementLevel": "hard",
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "7",
+        "sectionTitle": "1.13 Emergency Responders"
+      }
+    },
+    {
+      "id": "LATERAL_BUFFER",
+      "description": "At least 2 feet of lateral buffer space should separate traffic from work zone",
+      "requirement": "SHOULD",
+      "enforcementLevel": "soft",
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "32",
+        "sectionTitle": "4.1.5 Shy Distance and Buffer Space"
+      }
+    },
+    {
+      "id": "ARROW_BOARD_LANE_CLOSURE_ONLY",
+      "description": "Arrow boards shall only be used to indicate a lane closure, not a lane shift",
+      "requirement": "SHALL",
+      "enforcementLevel": "hard",
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "22-23",
+        "sectionTitle": "2.7.3 Arrow Boards"
+      }
+    },
+    {
+      "id": "FLAGGER_STOP_SIGNAL_PROHIBITED",
+      "description": "Traffic cannot be flagged to proceed through a red traffic signal or STOP sign",
+      "requirement": "SHALL",
+      "enforcementLevel": "hard",
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "26",
+        "sectionTitle": "3.3 Flagging Principles",
+        "notes": "Per ORS 811.265"
+      }
+    },
+    {
+      "id": "MAX_FLAGGER_DELAY",
+      "description": "Vehicles should not be delayed longer than 5 minutes at flagger station under normal conditions",
+      "requirement": "SHOULD",
+      "enforcementLevel": "soft",
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "26",
+        "sectionTitle": "3.3 Flagging Principles"
+      }
+    }
+  ],
+
+  "signPlacement": [
+    {
+      "signCode": "ROAD_WORK_AHEAD",
+      "position": "upstream",
+      "offsetFromWorkZone_ft": {
+        "min": 100,
+        "max": 500,
+        "typical": 200
+      },
+      "lateralPosition": "right_shoulder",
+      "constraints": [
+        "First sign in sequence",
+        "Additional signs if extended queues develop"
+      ],
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "28",
+        "sectionTitle": "3.5 Flagging Signs & Equipment"
+      }
+    },
+    {
+      "signCode": "BE_PREPARED_TO_STOP",
+      "position": "upstream",
+      "offsetFromWorkZone_ft": {
+        "min": 100,
+        "max": 350,
+        "typical": 150
+      },
+      "lateralPosition": "right_shoulder",
+      "constraints": [
+        "Used with flagger operations",
+        "Remove or cover when flagging not in use"
+      ],
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "27-28",
+        "sectionTitle": "3.5 Flagging Signs & Equipment"
+      }
+    },
+    {
+      "signCode": "FLAGGER_AHEAD",
+      "position": "upstream",
+      "offsetFromWorkZone_ft": {
+        "min": 100,
+        "max": 350,
+        "typical": 100
+      },
+      "lateralPosition": "right_shoulder",
+      "constraints": [
+        "CW23-2 sign preferred (not W20-7a with flag symbol)",
+        "Remove, cover or turn when flagging not in use"
+      ],
+      "source": {
+        "sourcePdf": "2025-TTCM_portland.pdf",
+        "page": "27",
+        "sectionTitle": "3.5 Flagging Signs & Equipment"
+      }
+    }
+  ],
+
+  "nightOperations": {
+    "additionalRequirements": [
+      "All TCDs shall be retroreflective",
+      "All TCDs and worker apparel should provide visibility from 1000 feet",
+      "Pedestrian diversions and lanes adjacent to sidewalk closures should be adequately lit",
+      "Cones shall be at least 28 inches tall and retroreflective",
+      "Flagger stations shall be illuminated separately from work space"
+    ],
+    "reflectivityRequired": true,
+    "minVisibilityDistance_ft": 1000,
+    "source": {
+      "sourcePdf": "2025-TTCM_portland.pdf",
+      "page": "32-33",
+      "sectionTitle": "4.1.6 Night Time Operations"
+    }
+  },
+
+  "validation": {
+    "enabled": true,
+    "rules": [
+      "SIGN_OUTSIDE_WORK_ZONE",
+      "CONES_NOT_FOR_PEDESTRIANS",
+      "FIRE_APPARATUS_WIDTH",
+      "ARROW_BOARD_LANE_CLOSURE_ONLY",
+      "FLAGGER_STOP_SIGNAL_PROHIBITED"
+    ]
+  }
+}
+
