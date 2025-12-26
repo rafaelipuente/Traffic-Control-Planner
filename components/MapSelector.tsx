@@ -155,19 +155,59 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const drawRef = useRef<MapboxDraw | null>(null);
+  const geocoderRef = useRef<MapboxGeocoder | null>(null);
   const locationLabelRef = useRef<string>("");
   const clickMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const previewPolygonRef = useRef<string | null>(null);
+  const drawTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const [locationLabel, setLocationLabel] = useState<string>("");
   const [isDrawing, setIsDrawing] = useState(false);
   const [workZoneMode, setWorkZoneMode] = useState<WorkZoneMode>("roadSegment");
   const [clickPoints, setClickPoints] = useState<[number, number][]>([]);
+  const [drawingVertexCount, setDrawingVertexCount] = useState(0);
+  const [drawingError, setDrawingError] = useState<string | null>(null);
 
   // Keep ref in sync with state for use in callbacks
   useEffect(() => {
     locationLabelRef.current = locationLabel;
   }, [locationLabel]);
+
+  /**
+   * Disable map interactions during polygon drawing.
+   * This prevents clicks from panning/zooming instead of placing vertices.
+   * Map interactions interfere with MapboxDraw's draw_polygon mode.
+   */
+  const disableMapInteractions = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    
+    console.log("[DRAW] Disabling map interactions to prevent click interference");
+    map.dragPan.disable();
+    map.dragRotate.disable();
+    map.doubleClickZoom.disable();
+    map.scrollZoom.disable();
+    map.boxZoom.disable();
+    map.keyboard.disable();
+    map.touchZoomRotate.disable();
+  }, []);
+
+  /**
+   * Re-enable map interactions after drawing completes or is cancelled.
+   */
+  const enableMapInteractions = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    
+    console.log("[DRAW] Re-enabling map interactions");
+    map.dragPan.enable();
+    map.dragRotate.enable();
+    map.doubleClickZoom.enable();
+    map.scrollZoom.enable();
+    map.boxZoom.enable();
+    map.keyboard.enable();
+    map.touchZoomRotate.enable();
+  }, []);
 
   const clearClickMarkers = useCallback(() => {
     clickMarkersRef.current.forEach(m => m.remove());
@@ -397,6 +437,7 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
       },
     });
 
+    geocoderRef.current = geocoder;
     map.addControl(geocoder as unknown as mapboxgl.IControl, "top-left");
 
     // Handle geocoder result - fly to location
@@ -419,19 +460,84 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
       }
     });
 
-    map.on("draw.create", () => {
-      setIsDrawing(false);
+    // Comprehensive draw event logging and handling
+    // These listeners are registered ONCE during map initialization
+    
+    map.on("draw.modechange", (e: { mode: string }) => {
+      console.log(`[DRAW] draw.modechange mode=${e.mode}`);
+      
+      if (e.mode === "draw_polygon") {
+        setDrawingVertexCount(0);
+        setDrawingError(null);
+        
+        // Start timeout to detect failed clicks
+        if (drawTimeoutRef.current) clearTimeout(drawTimeoutRef.current);
+        drawTimeoutRef.current = setTimeout(() => {
+          const features = draw.getAll();
+          const currentVertexCount = features.features[0]?.geometry.coordinates[0]?.length || 0;
+          
+          if (currentVertexCount === 0) {
+            console.warn("[DRAW] No vertices placed after 5 seconds - clicks may not be registering");
+            setDrawingError("Clicks aren't registering. Try clicking again or zoom in.");
+          }
+        }, 5000);
+      }
+    });
+
+    map.on("draw.selectionchange", (e: { features: unknown[] }) => {
+      console.log(`[DRAW] draw.selectionchange featureIds=[${e.features.map((f: {id?: string}) => f.id).join(", ")}]`);
+    });
+
+    map.on("draw.update", (e: { features: unknown[] }) => {
+      const feature = e.features[0] as { geometry?: { coordinates?: number[][][] } };
+      const points = feature?.geometry?.coordinates?.[0]?.length || 0;
+      console.log(`[DRAW] draw.update points=${points}`);
+      setDrawingVertexCount(points > 0 ? points - 1 : 0); // -1 because last point is the closing point
+      setDrawingError(null);
       processGeometry();
     });
-    map.on("draw.update", processGeometry);
-    map.on("draw.delete", processGeometry);
+
+    map.on("draw.create", (e: { features: unknown[] }) => {
+      const feature = e.features[0] as { id?: string; geometry?: { coordinates?: number[][][] } };
+      const points = feature?.geometry?.coordinates?.[0]?.length || 0;
+      console.log(`[DRAW] draw.create id=${feature.id} points=${points}`);
+      
+      // Clear timeout
+      if (drawTimeoutRef.current) {
+        clearTimeout(drawTimeoutRef.current);
+        drawTimeoutRef.current = null;
+      }
+      
+      // Validate minimum points
+      if (points < 4) { // 3 unique points + 1 closing point
+        console.warn(`[DRAW] Polygon has insufficient points: ${points}`);
+        setDrawingError("Need at least 3 points to create a polygon.");
+        draw.deleteAll();
+        return;
+      }
+      
+      setIsDrawing(false);
+      setDrawingVertexCount(0);
+      setDrawingError(null);
+      enableMapInteractions();
+      processGeometry();
+    });
+
+    map.on("draw.delete", (e: { features: unknown[] }) => {
+      console.log(`[DRAW] draw.delete count=${e.features.length}`);
+      processGeometry();
+    });
 
     return () => {
+      if (drawTimeoutRef.current) {
+        clearTimeout(drawTimeoutRef.current);
+      }
       map.remove();
       mapRef.current = null;
       drawRef.current = null;
+      geocoderRef.current = null;
     };
-  }, [mapToken, processGeometry]);
+  }, [mapToken, processGeometry, enableMapInteractions]);
 
   // Attach/detach click handler based on mode and drawing state
   useEffect(() => {
@@ -456,6 +562,8 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
   const handleStartDrawing = () => {
     if (!mapRef.current) return;
     
+    console.log("[DRAW] start requested");
+    
     // Clear any existing geometry
     if (drawRef.current) {
       drawRef.current.deleteAll();
@@ -463,11 +571,33 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
     clearClickMarkers();
     clearPreviewPolygon();
     setClickPoints([]);
+    setDrawingVertexCount(0);
+    setDrawingError(null);
+    
+    // Dismiss geocoder overlay to prevent it from blocking map clicks
+    if (geocoderRef.current) {
+      geocoderRef.current.clear();
+      // Force close the suggestions dropdown
+      const geocoderContainer = document.querySelector(".mapboxgl-ctrl-geocoder");
+      if (geocoderContainer) {
+        const input = geocoderContainer.querySelector("input");
+        if (input) {
+          input.blur();
+        }
+      }
+    }
     
     if (workZoneMode === "area") {
       // Use MapboxDraw for polygon mode
       if (drawRef.current) {
+        disableMapInteractions(); // CRITICAL: Disable map interactions so clicks go to draw control
         drawRef.current.changeMode("draw_polygon");
+        
+        // Log the mode after changing
+        setTimeout(() => {
+          const mode = drawRef.current?.getMode();
+          console.log(`[DRAW] mode=${mode} after changeMode`);
+        }, 100);
       }
     }
     // For roadSegment and intersection, we handle clicks manually
@@ -477,16 +607,32 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
   };
 
   const handleClear = () => {
+    console.log("[DRAW] clear requested");
+    
     if (drawRef.current) {
       drawRef.current.deleteAll();
+      drawRef.current.changeMode("simple_select");
     }
     clearClickMarkers();
     clearPreviewPolygon();
     setClickPoints([]);
     setIsDrawing(false);
+    setDrawingVertexCount(0);
+    setDrawingError(null);
+    
+    // Clear any pending timeout
+    if (drawTimeoutRef.current) {
+      clearTimeout(drawTimeoutRef.current);
+      drawTimeoutRef.current = null;
+    }
+    
     if (mapRef.current) {
       mapRef.current.getCanvas().style.cursor = "";
     }
+    
+    // Re-enable map interactions when exiting draw mode
+    enableMapInteractions();
+    
     onGeometryChange(null, locationLabelRef.current);
   };
 
@@ -549,13 +695,14 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
       </div>
 
       {/* Draw controls */}
-      <div className="flex gap-2 flex-wrap">
+      <div className="flex gap-2 flex-wrap items-center">
         <button
           type="button"
           onClick={handleStartDrawing}
+          disabled={isDrawing}
           className={`px-4 py-2 text-sm font-medium rounded-md border transition-colors ${
             isDrawing
-              ? "bg-orange-500 text-white border-orange-600"
+              ? "bg-orange-500 text-white border-orange-600 cursor-not-allowed"
               : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
           }`}
         >
@@ -568,6 +715,38 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
         >
           Clear
         </button>
+        
+        {/* Finish button - appears after 3 points in polygon mode */}
+        {isDrawing && workZoneMode === "area" && drawingVertexCount >= 3 && (
+          <button
+            type="button"
+            onClick={() => {
+              console.log("[DRAW] Finish button clicked");
+              if (drawRef.current) {
+                // Get the current feature being drawn
+                const features = drawRef.current.getAll();
+                if (features.features.length > 0) {
+                  // Manually trigger completion by changing mode
+                  drawRef.current.changeMode("simple_select");
+                  setIsDrawing(false);
+                  setDrawingVertexCount(0);
+                  enableMapInteractions();
+                  processGeometry();
+                }
+              }
+            }}
+            className="px-4 py-2 text-sm font-bold rounded-md border-2 border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-600 transition-colors shadow-sm animate-pulse"
+          >
+            ✓ Finish Polygon
+          </button>
+        )}
+        
+        {/* Vertex count indicator */}
+        {isDrawing && workZoneMode === "area" && drawingVertexCount > 0 && (
+          <span className="text-xs font-mono text-slate-600 bg-slate-100 px-2 py-1 rounded border border-slate-200">
+            {drawingVertexCount} point{drawingVertexCount !== 1 ? "s" : ""}
+          </span>
+        )}
       </div>
 
       {/* Instructions */}
@@ -582,9 +761,21 @@ export default function MapSelector({ mapToken, onGeometryChange }: MapSelectorP
           {workZoneMode === "intersection" && (
             <p>✚ <strong>Click at the intersection</strong> center to define the work zone</p>
           )}
-          {workZoneMode === "area" && (
-            <p>🔷 Click to add points. <strong>Double-click to finish</strong></p>
+          {workZoneMode === "area" && !drawingError && (
+            <p>
+              🔷 Click to add points. 
+              {drawingVertexCount < 3 && <> Need at least 3 points.</>}
+              {drawingVertexCount >= 3 && <strong> Double-click or click "Finish Polygon" to complete.</strong>}
+            </p>
           )}
+        </div>
+      )}
+      
+      {/* Error message */}
+      {drawingError && (
+        <div className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-md border border-red-200 flex items-start gap-2">
+          <span className="text-lg">⚠️</span>
+          <p>{drawingError}</p>
         </div>
       )}
 
