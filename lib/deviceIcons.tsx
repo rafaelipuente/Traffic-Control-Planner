@@ -3,6 +3,12 @@
  * 
  * This module provides a SINGLE source of truth for marker rendering.
  * Both auto-layout and manual edit-mode markers MUST use createDeviceMarkerElement().
+ * 
+ * UNIFICATION GUARANTEE:
+ * By forcing all marker creation through `createDeviceMarkerElement`, we ensure that:
+ * 1. Visuals are always derived deterministically from `device.type` and `device.subtype`.
+ * 2. There is no separate "edit mode" rendering path that could drift (e.g. producing cyan circles).
+ * 3. Auto-layout and manual additions look identical because they use the exact same DOM factory.
  */
 
 import { DeviceType, SignSubtype, SIGN_SUBTYPES } from "./layoutTypes";
