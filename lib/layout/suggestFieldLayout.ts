@@ -904,11 +904,18 @@ function placeSignsAlongRoad(
       _debugInfo.signTargetsAfter.push(signPos);
     }
     
+    // Assign labels in reverse order (C closest, A furthest)
+    // i=0 (closest) -> C
+    // i=1 -> B
+    // i=2 (furthest) -> A
+    const signLabels = ["C", "B", "A"];
+    const label = i < 3 ? signLabels[i] : SIGN_LABELS[i];
+    
     devices.push({
       id: generateDeviceId(),
       type: "sign",
       lngLat: signPos,
-      label: SIGN_LABELS[i],
+      label,
       meta: { 
         sequence: i + 1, 
         purpose: "advance_warning", 
@@ -1015,11 +1022,15 @@ function placeSignsFallback(
       _debugInfo.signTargetsAfter.push(signPos);
     }
     
+    // Assign labels in reverse order (C closest, A furthest)
+    const signLabels = ["C", "B", "A"];
+    const label = i < 3 ? signLabels[i] : SIGN_LABELS[i];
+    
     devices.push({
       id: generateDeviceId(),
       type: "sign",
       lngLat: signPos,
-      label: SIGN_LABELS[i],
+      label,
       meta: { 
         sequence: i + 1, 
         purpose: "advance_warning", 
