@@ -49,6 +49,15 @@ const MAX_SIGN_ROAD_DISTANCE_M = 15;
 /** Debug mode flag - set to true to enable debug overlays in dev */
 export const DEBUG_LAYOUT = false;
 
+/** Debug flag for sign spacing specifically */
+const DEBUG_SIGN_SPACING = true;
+
+/** Base offset from entry point for the closest sign (Sign C) in feet */
+const SIGN_BASE_OFFSET_FT = 50;
+
+/** Minimum separation between signs to prevent stacking (meters) */
+const MIN_SIGN_SEPARATION_M = 15;
+
 /** 
  * LEGACY: Speed-based spacing in feet (DEPRECATED - now using rules resolver)
  * Kept as fallback if rules resolution fails
@@ -698,12 +707,24 @@ function getLayoutConfig(
     // Cache for debugging
     _lastResolvedRules = resolved;
     
-    // Convert single spacing to array (signs at 1x, 2x, 3x spacing)
+    // Compute sign distances from entry point:
+    // Sign C (closest to work zone): baseOffset
+    // Sign B: baseOffset + 1*spacing
+    // Sign A (furthest upstream): baseOffset + 2*spacing
+    // This ensures proper separation even with polyline clamping
+    const spacing = resolved.signSpacingFt;
     const signSpacingFt = [
-      resolved.signSpacingFt,
-      resolved.signSpacingFt * 2,
-      resolved.signSpacingFt * 3,
+      SIGN_BASE_OFFSET_FT,                    // Sign C: closest
+      SIGN_BASE_OFFSET_FT + spacing,          // Sign B: middle
+      SIGN_BASE_OFFSET_FT + spacing * 2,      // Sign A: furthest
     ];
+    
+    if (DEBUG_SIGN_SPACING) {
+      console.log(
+        `[SIGN_SPACING] speed=${speedMph}mph spacing=${spacing}ft ` +
+        `distances: C=${signSpacingFt[0]}ft B=${signSpacingFt[1]}ft A=${signSpacingFt[2]}ft`
+      );
+    }
     
     return {
       signSpacingFt,
@@ -756,6 +777,7 @@ function isTooCloseToExisting(pos: Point, existingDevices: FieldDevice[], minSpa
  * 1. Signs are now placed on the correct shoulder (left/right based on polygon location)
  * 2. Signs are snapped to the road polyline and not extended off-road
  * 3. Signs are validated to be near the road
+ * 4. Anti-stacking: Enforces MIN_SIGN_SEPARATION_M between signs
  */
 function placeSignsAlongRoad(
   road: RoadPolyline,
@@ -801,10 +823,22 @@ function placeSignsAlongRoad(
     _debugInfo.shoulderSide = shoulderSide;
   }
   
+  // Track last placed sign position for minimum separation enforcement
+  let lastSignDistanceM = 0;
+  
   // Place signs upstream with shoulder offset
+  // Order: Sign C (closest), B (middle), A (furthest)
   for (let i = 0; i < config.signSpacingFt.length && i < 3; i++) {
-    const distFt = config.signSpacingFt[i];
-    const distM = distFt * FT_TO_M;
+    const requestedDistFt = config.signSpacingFt[i];
+    let distM = requestedDistFt * FT_TO_M;
+    
+    // Enforce minimum separation from previous sign
+    if (i > 0 && distM < lastSignDistanceM + MIN_SIGN_SEPARATION_M) {
+      distM = lastSignDistanceM + MIN_SIGN_SEPARATION_M;
+      if (DEBUG_SIGN_SPACING) {
+        console.log(`[SIGN_SPACING] Sign ${SIGN_LABELS[i]}: Adjusted distance from ${(requestedDistFt * FT_TO_M).toFixed(1)}m to ${distM.toFixed(1)}m for min separation`);
+      }
+    }
     
     // Walk along polyline (strict - no off-road extension)
     const walkResult = walkAlongPolylineStrict(
@@ -839,19 +873,31 @@ function placeSignsAlongRoad(
       signPos = applyShoulderOffset(walkResult.point, walkResult.bearing, shoulderSide, MAX_SIGN_ROAD_DISTANCE_M * 0.8);
     }
     
-    // Anti-stacking check
-    if (isTooCloseToExisting(signPos, devices, MIN_DEVICE_SPACING_M)) {
-      // Move further upstream
-      const adjustedWalk = walkAlongPolylineStrict(
-        road,
-        projection.segmentIndex,
-        projection.distanceAlongLine,
-        upstreamDirection * (distM + MIN_DEVICE_SPACING_M * 2)
-      );
-      if (adjustedWalk) {
-        signPos = applyShoulderOffset(adjustedWalk.point, adjustedWalk.bearing, shoulderSide);
+    // Anti-stacking check: ensure this sign is far enough from all existing devices
+    if (isTooCloseToExisting(signPos, devices, MIN_SIGN_SEPARATION_M)) {
+      // Move further upstream until we find a valid position
+      let adjustedDistM = distM + MIN_SIGN_SEPARATION_M;
+      for (let adjustAttempt = 0; adjustAttempt < 5; adjustAttempt++) {
+        const adjustedWalk = walkAlongPolylineStrict(
+          road,
+          projection.segmentIndex,
+          projection.distanceAlongLine,
+          upstreamDirection * adjustedDistM
+        );
+        if (adjustedWalk) {
+          const adjustedPos = applyShoulderOffset(adjustedWalk.point, adjustedWalk.bearing, shoulderSide);
+          if (!isTooCloseToExisting(adjustedPos, devices, MIN_SIGN_SEPARATION_M)) {
+            signPos = adjustedPos;
+            distM = adjustedDistM;
+            break;
+          }
+        }
+        adjustedDistM += MIN_SIGN_SEPARATION_M;
       }
     }
+    
+    // Update last sign distance for next iteration
+    lastSignDistanceM = distM;
     
     // Store post-offset position for debug
     if (_debugInfo) {
@@ -866,11 +912,29 @@ function placeSignsAlongRoad(
       meta: { 
         sequence: i + 1, 
         purpose: "advance_warning", 
-        distanceFt: distFt, 
+        distanceFt: Math.round(distM / FT_TO_M), 
         method: "road_aligned",
         shoulderSide,
       },
     });
+  }
+  
+  // Debug: Log final sign positions and pairwise distances
+  if (DEBUG_SIGN_SPACING && devices.length >= 2) {
+    const signLabels = devices.map(d => d.label).join(", ");
+    console.log(`[SIGN_SPACING] Placed signs: ${signLabels}`);
+    for (let i = 0; i < devices.length; i++) {
+      const d = devices[i];
+      console.log(`[SIGN_SPACING] ${d.label}: lng=${d.lngLat[0].toFixed(6)} lat=${d.lngLat[1].toFixed(6)} distFt=${d.meta?.distanceFt}`);
+    }
+    // Pairwise distances
+    for (let i = 0; i < devices.length; i++) {
+      for (let j = i + 1; j < devices.length; j++) {
+        const dist = distanceMeters(devices[i].lngLat, devices[j].lngLat);
+        const status = dist >= MIN_SIGN_SEPARATION_M ? "✅" : "❌ STACKED";
+        console.log(`[SIGN_SPACING] ${devices[i].label}-${devices[j].label} distance: ${dist.toFixed(1)}m ${status}`);
+      }
+    }
   }
   
   return devices;
@@ -879,6 +943,7 @@ function placeSignsAlongRoad(
 /**
  * Place signs using fallback axis method (when no road data available)
  * IMPROVED: Also applies shoulder offset to avoid centerline placement
+ * Anti-stacking: Enforces MIN_SIGN_SEPARATION_M between signs
  */
 function placeSignsFallback(
   axis: FallbackAxis,
@@ -896,9 +961,20 @@ function placeSignsFallback(
     _debugInfo.shoulderSide = shoulderSide;
   }
   
+  // Track last placed sign distance for minimum separation enforcement
+  let lastSignDistanceM = 0;
+  
   for (let i = 0; i < config.signSpacingFt.length && i < 3; i++) {
-    const distFt = config.signSpacingFt[i];
-    const distM = distFt * FT_TO_M;
+    const requestedDistFt = config.signSpacingFt[i];
+    let distM = requestedDistFt * FT_TO_M;
+    
+    // Enforce minimum separation from previous sign
+    if (i > 0 && distM < lastSignDistanceM + MIN_SIGN_SEPARATION_M) {
+      distM = lastSignDistanceM + MIN_SIGN_SEPARATION_M;
+      if (DEBUG_SIGN_SPACING) {
+        console.log(`[SIGN_SPACING_FALLBACK] Sign ${SIGN_LABELS[i]}: Adjusted distance from ${(requestedDistFt * FT_TO_M).toFixed(1)}m to ${distM.toFixed(1)}m for min separation`);
+      }
+    }
     
     // Move along upstream bearing
     const basePos = movePoint(axis.entryPoint, distM, axis.upstreamBearing);
@@ -917,11 +993,23 @@ function placeSignsFallback(
       signPos = applyShoulderOffset(basePos, axis.upstreamBearing, shoulderSide, SHOULDER_OFFSET_M + attempts * 3);
     }
     
-    // Anti-stacking check
-    if (isTooCloseToExisting(signPos, devices, MIN_DEVICE_SPACING_M)) {
-      const adjustedBase = movePoint(axis.entryPoint, distM + MIN_DEVICE_SPACING_M * 2, axis.upstreamBearing);
-      signPos = applyShoulderOffset(adjustedBase, axis.upstreamBearing, shoulderSide);
+    // Anti-stacking check: ensure this sign is far enough from all existing devices
+    if (isTooCloseToExisting(signPos, devices, MIN_SIGN_SEPARATION_M)) {
+      let adjustedDistM = distM + MIN_SIGN_SEPARATION_M;
+      for (let adjustAttempt = 0; adjustAttempt < 5; adjustAttempt++) {
+        const adjustedBase = movePoint(axis.entryPoint, adjustedDistM, axis.upstreamBearing);
+        const adjustedPos = applyShoulderOffset(adjustedBase, axis.upstreamBearing, shoulderSide);
+        if (!isTooCloseToExisting(adjustedPos, devices, MIN_SIGN_SEPARATION_M)) {
+          signPos = adjustedPos;
+          distM = adjustedDistM;
+          break;
+        }
+        adjustedDistM += MIN_SIGN_SEPARATION_M;
+      }
     }
+    
+    // Update last sign distance for next iteration
+    lastSignDistanceM = distM;
     
     if (_debugInfo) {
       _debugInfo.signTargetsAfter.push(signPos);
@@ -935,11 +1023,29 @@ function placeSignsFallback(
       meta: { 
         sequence: i + 1, 
         purpose: "advance_warning", 
-        distanceFt: distFt, 
+        distanceFt: Math.round(distM / FT_TO_M), 
         method: "axis_fallback",
         shoulderSide,
       },
     });
+  }
+  
+  // Debug: Log final sign positions and pairwise distances
+  if (DEBUG_SIGN_SPACING && devices.length >= 2) {
+    const signLabels = devices.map(d => d.label).join(", ");
+    console.log(`[SIGN_SPACING_FALLBACK] Placed signs: ${signLabels}`);
+    for (let i = 0; i < devices.length; i++) {
+      const d = devices[i];
+      console.log(`[SIGN_SPACING_FALLBACK] ${d.label}: lng=${d.lngLat[0].toFixed(6)} lat=${d.lngLat[1].toFixed(6)} distFt=${d.meta?.distanceFt}`);
+    }
+    // Pairwise distances
+    for (let i = 0; i < devices.length; i++) {
+      for (let j = i + 1; j < devices.length; j++) {
+        const dist = distanceMeters(devices[i].lngLat, devices[j].lngLat);
+        const status = dist >= MIN_SIGN_SEPARATION_M ? "✅" : "❌ STACKED";
+        console.log(`[SIGN_SPACING_FALLBACK] ${devices[i].label}-${devices[j].label} distance: ${dist.toFixed(1)}m ${status}`);
+      }
+    }
   }
   
   return devices;
