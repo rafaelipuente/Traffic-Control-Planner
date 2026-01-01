@@ -649,6 +649,7 @@ interface LayoutConfig {
   bufferLengthFt: number;
   drumsRequired: boolean;
   requiredSigns: string[];
+  flaggerCount: number;
 }
 
 /** Global cache for last resolved rules (for debugging) */
@@ -679,6 +680,7 @@ function getLegacySpeedConfig(speedMph: number): LayoutConfig {
     bufferLengthFt: 50,
     drumsRequired: speedMph >= 35,
     requiredSigns: ["ROAD_WORK_AHEAD", "BE_PREPARED_TO_STOP"],
+    flaggerCount: 0, // Legacy fallback doesn't place flaggers
   };
 }
 
@@ -733,6 +735,7 @@ function getLayoutConfig(
       bufferLengthFt: resolved.bufferLengthFt,
       drumsRequired: resolved.drumsRequired,
       requiredSigns: resolved.requiredSigns,
+      flaggerCount: resolved.flaggerCount,
     };
   } catch (error) {
     console.error("[RULES_ERROR] Failed to resolve TCP rules:", error);
@@ -1267,11 +1270,11 @@ export function suggestFieldLayout(input: LayoutSuggestionInput): FieldLayout {
   devices.push(...cones);
   
   // Place flaggers based on resolved rules
-  if (resolved.flaggerCount > 0) {
-    console.log(`[LAYOUT] Placing ${resolved.flaggerCount} flaggers based on rules`);
+  if (config.flaggerCount > 0) {
+    console.log(`[LAYOUT] Placing ${config.flaggerCount} flaggers based on rules`);
     const flaggers = placeFlaggers(entryPoint, exitPoint, upstreamBearing);
     // Only place as many flaggers as the rules specify
-    devices.push(...flaggers.slice(0, resolved.flaggerCount));
+    devices.push(...flaggers.slice(0, config.flaggerCount));
   }
   
   // Place arrow board (for lane closures at higher speeds)
