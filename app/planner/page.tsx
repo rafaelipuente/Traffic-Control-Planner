@@ -5,7 +5,6 @@ import dynamic from "next/dynamic";
 import JobDetailsForm, { JobDetails } from "@/components/JobDetailsForm";
 import OutputPanel from "@/components/OutputPanel";
 import GenerationProgress from "@/components/GenerationProgress";
-import RagSearchTester from "@/components/RagSearchTester";
 import Toast from "@/components/Toast";
 import { TcpDraftResponse, Bbox, PolygonRing, CoverageInfo } from "@/lib/tcpTypes";
 import { GeometryOutput } from "@/components/MapSelector";
@@ -549,9 +548,6 @@ export default function PlannerPage() {
     handleGenerate();
   }, [handleGenerate]);
 
-  // Dev tools state
-  const [isDevToolsOpen, setIsDevToolsOpen] = useState(false);
-
   // Selection summary
   const selectionSummary = geometry
     ? geometry.type === "bbox"
@@ -751,32 +747,6 @@ export default function PlannerPage() {
             </div>
           </div>
         </div>
-
-        {/* DEV ONLY: Collapsible RAG Search Tester */}
-        {IS_DEV && (
-          <div className={`fixed bottom-0 left-0 right-0 z-50 transition-transform duration-300 ease-in-out ${
-            isDevToolsOpen ? "translate-y-0" : "translate-y-[calc(100%-40px)]"
-          }`}>
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="bg-slate-900 rounded-t-lg shadow-2xl border-t border-slate-700 overflow-hidden">
-                <button 
-                  onClick={() => setIsDevToolsOpen(!isDevToolsOpen)}
-                  className="w-full h-10 bg-slate-800 hover:bg-slate-700 flex items-center justify-between px-4 cursor-pointer transition-colors"
-                >
-                  <span className="text-xs font-mono font-bold text-[#FFB300]">
-                    🛠 DEV TOOLS // RAG SEARCH
-                  </span>
-                  <span className="text-slate-400">
-                    {isDevToolsOpen ? "▼ Collapse" : "▲ Expand"}
-                  </span>
-                </button>
-                <div className="p-4 bg-slate-100 max-h-[600px] overflow-y-auto">
-                  <RagSearchTester />
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </main>
 
       {/* Toast notification for AI refinement feedback */}

@@ -1123,19 +1123,22 @@ function placeConesAlongBoundary(
 
 /**
  * Place flaggers at entry and exit points
+ * Returns array with up to 2 flaggers (caller can slice if fewer needed)
  */
 function placeFlaggers(entryPoint: Point, exitPoint: Point, upstreamBearing: number): FieldDevice[] {
   const devices: FieldDevice[] = [];
   
+  // Flagger 1: Always placed at entry/taper point (upstream approach)
   const flagger1Pos = movePoint(entryPoint, 15, upstreamBearing);
   devices.push({
     id: generateDeviceId(),
     type: "flagger",
     lngLat: flagger1Pos,
     label: "F1",
-    meta: { purpose: "traffic_control", position: "upstream" },
+    meta: { purpose: "Control traffic entering work zone", position: "upstream_approach" },
   });
   
+  // Flagger 2: Placed at exit point (downstream approach) - for two-way operations
   const downstreamBearing = upstreamBearing + Math.PI;
   const flagger2Pos = movePoint(exitPoint, 15, downstreamBearing);
   devices.push({
@@ -1143,7 +1146,7 @@ function placeFlaggers(entryPoint: Point, exitPoint: Point, upstreamBearing: num
     type: "flagger",
     lngLat: flagger2Pos,
     label: "F2",
-    meta: { purpose: "traffic_control", position: "downstream" },
+    meta: { purpose: "Control traffic from opposite direction", position: "downstream_approach" },
   });
   
   return devices;
@@ -1263,10 +1266,12 @@ export function suggestFieldLayout(input: LayoutSuggestionInput): FieldLayout {
   const cones = placeConesAlongBoundary(polygonRing, entryPoint, centroid, config, devices);
   devices.push(...cones);
   
-  // Place flaggers (for specific work types)
-  if (workType === "one_lane_two_way_flaggers") {
+  // Place flaggers based on resolved rules
+  if (resolved.flaggerCount > 0) {
+    console.log(`[LAYOUT] Placing ${resolved.flaggerCount} flaggers based on rules`);
     const flaggers = placeFlaggers(entryPoint, exitPoint, upstreamBearing);
-    devices.push(...flaggers);
+    // Only place as many flaggers as the rules specify
+    devices.push(...flaggers.slice(0, resolved.flaggerCount));
   }
   
   // Place arrow board (for lane closures at higher speeds)

@@ -28,6 +28,10 @@ export interface ResolvedTcpRules {
   bufferLengthFt: number;
   /** Whether drums are required (vs cones) */
   drumsRequired: boolean;
+  /** Number of flaggers required for this operation */
+  flaggerCount: number;
+  /** Where flaggers should be positioned */
+  flaggerPositions: Array<{ location: string; purpose: string }>;
   /** Citations for each resolved value */
   citations: Record<string, {
     sourcePdf: string;
@@ -301,6 +305,89 @@ function getRequiredSigns(operation: OperationType): { signs: string[]; source: 
   }
 }
 
+/**
+ * Determine flagger requirements based on operation type
+ * Returns count and positioning guidance
+ */
+function getFlaggerRequirements(operation: OperationType, speedMph: number): { 
+  count: number; 
+  positions: Array<{ location: string; purpose: string }>;
+  source: SourceCitation;
+} {
+  switch (operation) {
+    case "flagging":
+      // One-lane two-way operations require 2 flaggers (one each end)
+      return {
+        count: 2,
+        positions: [
+          { location: "upstream_approach", purpose: "Control traffic entering work zone" },
+          { location: "downstream_approach", purpose: "Control traffic from opposite direction" }
+        ],
+        source: {
+          sourcePdf: "2025-TTCM_portland.pdf",
+          page: "28",
+          sectionTitle: "3.5 Flagging Signs & Equipment",
+          notes: "One flagger per approach recommended for one-lane two-way operations"
+        }
+      };
+    
+    case "lane_closure":
+      // Lane closures on higher speed roads may need flaggers for traffic control
+      if (speedMph >= 40) {
+        return {
+          count: 1,
+          positions: [
+            { location: "taper_upstream", purpose: "Guide traffic through lane merge" }
+          ],
+          source: {
+            sourcePdf: "2025-TTCM_portland.pdf",
+            sectionTitle: "4.7 Lane Closures",
+            notes: "Flagger recommended for high-speed lane closures to assist merging traffic"
+          }
+        };
+      }
+      // Lower speed lane closures may not need flaggers
+      return {
+        count: 0,
+        positions: [],
+        source: {
+          sourcePdf: "2025-TTCM_portland.pdf",
+          sectionTitle: "4.7 Lane Closures",
+          notes: "Flaggers optional for low-speed lane closures with clear signage"
+        }
+      };
+    
+    case "full_closure":
+      // Full closures typically need flaggers to direct detour traffic
+      return {
+        count: 1,
+        positions: [
+          { location: "closure_point", purpose: "Direct traffic to detour route" }
+        ],
+        source: {
+          sourcePdf: "2025-TTCM_portland.pdf",
+          page: "42",
+          sectionTitle: "4.7 Lane Closures and Detours",
+          notes: "Flagger recommended at closure point to direct detour traffic"
+        }
+      };
+    
+    case "shoulder_work":
+    case "lane_shift":
+    default:
+      // These operations typically don't require flaggers
+      return {
+        count: 0,
+        positions: [],
+        source: {
+          sourcePdf: "2025-TTCM_portland.pdf",
+          sectionTitle: "4.1 General Design Considerations",
+          notes: "Flaggers not typically required for this operation type"
+        }
+      };
+  }
+}
+
 // =============================================================================
 // MAIN RESOLVER
 // =============================================================================
@@ -336,6 +423,7 @@ export function resolveTcpRules(input: ResolveTcpRulesInput): ResolvedTcpRules {
   const bufferLength = getBufferLength(speedMph);
   const drumsRequired = getDrumsRequired(speedMph, timeOfDay);
   const requiredSigns = getRequiredSigns(operation);
+  const flaggerRequirements = getFlaggerRequirements(operation, speedMph);
   
   const resolved: ResolvedTcpRules = {
     signSpacingFt: signSpacing.spacingFt,
@@ -344,6 +432,8 @@ export function resolveTcpRules(input: ResolveTcpRulesInput): ResolvedTcpRules {
     bufferLengthFt: bufferLength.lengthFt,
     drumsRequired: drumsRequired.required,
     requiredSigns: requiredSigns.signs,
+    flaggerCount: flaggerRequirements.count,
+    flaggerPositions: flaggerRequirements.positions,
     citations: {
       signSpacing: signSpacing.source,
       taperLength: taperLength.source,
@@ -351,6 +441,7 @@ export function resolveTcpRules(input: ResolveTcpRulesInput): ResolvedTcpRules {
       bufferLength: bufferLength.source,
       drumsRequired: drumsRequired.source,
       requiredSigns: requiredSigns.source,
+      flaggers: flaggerRequirements.source,
     }
   };
   
@@ -360,7 +451,8 @@ export function resolveTcpRules(input: ResolveTcpRulesInput): ResolvedTcpRules {
     `taperLength=${resolved.taperLengthFt}ft ` +
     `coneSpacing=${resolved.coneSpacingFt}ft ` +
     `buffer=${resolved.bufferLengthFt}ft ` +
-    `drums=${resolved.drumsRequired}`
+    `drums=${resolved.drumsRequired} ` +
+    `flaggers=${resolved.flaggerCount}`
   );
   
   // DEV-ONLY: Expose globally for QA

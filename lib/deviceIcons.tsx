@@ -55,9 +55,13 @@ export function getDeviceIconSrc(type: DeviceType, subtype?: SignSubtype): strin
     // Drums and barricades use cone-like styling
     return CONE_ICON_SRC;
   }
-  if (type === "arrowBoard" || type === "flagger") {
-    // Arrow boards and flaggers use sign-like styling
+  if (type === "arrowBoard") {
+    // Arrow boards use sign-like styling
     return SIGN_ICON_SRC.generic;
+  }
+  if (type === "flagger") {
+    // Flaggers get a special indicator (no icon file needed - we'll render as emoji/text)
+    return ""; // Empty string indicates special rendering
   }
   // UNKNOWN TYPE - this should never happen
   console.error(`[DeviceIcons] Unknown device type: "${type}"`);
@@ -141,31 +145,56 @@ export function createDeviceMarkerElement(
     position: relative;
   `;
   
-  // Create image element for the icon
-  const img = document.createElement("img");
-  img.src = iconSrc;
-  img.alt = device.type === "sign" 
-    ? `Sign: ${SIGN_SUBTYPES[device.subtype || "generic"]?.label || "Warning"}`
-    : "Traffic Cone";
-  img.style.cssText = `
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    pointer-events: none;
-  `;
-  img.draggable = false;
+  // Special rendering for flaggers (emoji/text instead of icon)
+  if (device.type === "flagger") {
+    const flaggerIcon = document.createElement("div");
+    flaggerIcon.textContent = "🚧";
+    flaggerIcon.style.cssText = `
+      font-size: ${size * 0.8}px;
+      line-height: 1;
+      pointer-events: none;
+      filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
+    `;
+    el.appendChild(flaggerIcon);
+  } else {
+    // Create image element for the icon (cones, signs, etc.)
+    const img = document.createElement("img");
+    img.src = iconSrc;
+    img.alt = device.type === "sign" 
+      ? `Sign: ${SIGN_SUBTYPES[device.subtype || "generic"]?.label || "Warning"}`
+      : device.type === "cone" ? "Traffic Cone" : "Device";
+    img.style.cssText = `
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      pointer-events: none;
+    `;
+    img.draggable = false;
+    el.appendChild(img);
+  }
   
-  el.appendChild(img);
-  
-  // Add label badge if exists (for signs A, B, C, etc.)
+  // Add label badge if exists (for signs A, B, C, flaggers F1, F2, etc.)
   if (device.label) {
     const labelEl = document.createElement("span");
+    // Determine label color based on device type
+    let bgColor, textColor;
+    if (device.type === "sign") {
+      bgColor = "#FFB300";
+      textColor = "#000";
+    } else if (device.type === "flagger") {
+      bgColor = "#4CAF50"; // Green for flaggers
+      textColor = "#fff";
+    } else {
+      bgColor = "#FF6B00"; // Orange for cones
+      textColor = "#fff";
+    }
+    
     labelEl.style.cssText = `
       position: absolute;
       top: -6px;
       right: -6px;
-      background: ${device.type === "sign" ? "#FFB300" : "#FF6B00"};
-      color: ${device.type === "sign" ? "#000" : "#fff"};
+      background: ${bgColor};
+      color: ${textColor};
       font-size: 10px;
       font-weight: bold;
       padding: 1px 4px;
