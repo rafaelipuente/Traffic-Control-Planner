@@ -198,69 +198,115 @@ export default function OutputPanel({
       const jobNumberStr = jobInfo?.jobOwner?.jobNumber || "";
 
       // Capture the content with safe color overrides to avoid lab()/oklab() parsing errors
+      // html2canvas does NOT support CSS Color Level 4 functions (lab, oklch, oklab, lch, etc.)
       const canvas = await html2canvas(exportRef.current, {
         scale: 2,
         useCORS: true,
         allowTaint: true,
         backgroundColor: "#ffffff",
-        onclone: (doc) => {
-          // Inject safe sRGB colors to prevent html2canvas from choking on lab()/oklab()/oklch()
+        onclone: (doc, element) => {
+          // CRITICAL FIX: Walk through ALL elements and inline their computed colors as sRGB
+          // This prevents html2canvas from encountering any lab()/oklch()/oklab() colors
+          const convertColorToRgb = (color: string): string => {
+            // If it's already a simple format, return as-is
+            if (!color || color === 'transparent' || color === 'inherit' || color === 'initial') {
+              return color;
+            }
+            // If it contains modern color functions, return a fallback
+            if (color.includes('lab(') || color.includes('oklch(') || color.includes('oklab(') || color.includes('lch(') || color.includes('color(')) {
+              return '#1f2937'; // Default to gray-800
+            }
+            return color;
+          };
+
+          // Process all elements in the cloned document
+          const processElement = (el: Element) => {
+            if (el instanceof HTMLElement) {
+              const computed = doc.defaultView?.getComputedStyle(el);
+              if (computed) {
+                // Override color properties with safe sRGB values
+                const colorProps = ['color', 'backgroundColor', 'borderColor', 'borderTopColor', 
+                                   'borderRightColor', 'borderBottomColor', 'borderLeftColor',
+                                   'outlineColor', 'textDecorationColor', 'fill', 'stroke'];
+                colorProps.forEach(prop => {
+                  const value = computed.getPropertyValue(prop.replace(/([A-Z])/g, '-$1').toLowerCase());
+                  if (value && (value.includes('lab(') || value.includes('oklch(') || value.includes('oklab('))) {
+                    el.style.setProperty(prop.replace(/([A-Z])/g, '-$1').toLowerCase(), convertColorToRgb(value), 'important');
+                  }
+                });
+              }
+            }
+            // Process children
+            Array.from(el.children).forEach(processElement);
+          };
+
+          // Process the export container
+          processElement(element);
+
+          // Also inject global CSS overrides as a safety net
           const style = doc.createElement("style");
           style.innerHTML = `
+            /* Global reset for modern color functions */
+            *, *::before, *::after {
+              --tw-ring-color: rgba(59, 130, 246, 0.5) !important;
+              --tw-shadow-color: rgba(0, 0, 0, 0.1) !important;
+            }
+            
             [data-testid="tcp-output-panel"],
             [data-testid="tcp-output-panel"] * {
-              color: #111827 !important;
-              background-color: #ffffff !important;
-              border-color: #e5e7eb !important;
               box-shadow: none !important;
               filter: none !important;
               backdrop-filter: none !important;
             }
-            [data-testid="tcp-output-panel"] .bg-orange-50 {
-              background-color: #fff7ed !important;
-            }
-            [data-testid="tcp-output-panel"] .bg-orange-100 {
-              background-color: #ffedd5 !important;
-            }
-            [data-testid="tcp-output-panel"] .bg-gray-50 {
-              background-color: #f9fafb !important;
-            }
-            [data-testid="tcp-output-panel"] .bg-gray-100 {
-              background-color: #f3f4f6 !important;
-            }
-            [data-testid="tcp-output-panel"] .bg-blue-100 {
-              background-color: #dbeafe !important;
-            }
-            [data-testid="tcp-output-panel"] .text-orange-600 {
-              color: #ea580c !important;
-            }
-            [data-testid="tcp-output-panel"] .text-orange-800 {
-              color: #9a3412 !important;
-            }
-            [data-testid="tcp-output-panel"] .text-blue-800 {
-              color: #1e40af !important;
-            }
-            [data-testid="tcp-output-panel"] .text-gray-500 {
-              color: #6b7280 !important;
-            }
-            [data-testid="tcp-output-panel"] .text-gray-600 {
-              color: #4b5563 !important;
-            }
-            [data-testid="tcp-output-panel"] .text-gray-700 {
-              color: #374151 !important;
-            }
-            [data-testid="tcp-output-panel"] .text-gray-800 {
-              color: #1f2937 !important;
-            }
-            [data-testid="tcp-output-panel"] .border-gray-100 {
-              border-color: #f3f4f6 !important;
-            }
-            [data-testid="tcp-output-panel"] .border-gray-200 {
-              border-color: #e5e7eb !important;
-            }
-            [data-testid="tcp-output-panel"] .border-orange-200 {
-              border-color: #fed7aa !important;
-            }
+            
+            /* Tailwind color class overrides with explicit sRGB values */
+            .bg-white { background-color: #ffffff !important; }
+            .bg-slate-50, .bg-gray-50 { background-color: #f8fafc !important; }
+            .bg-slate-100, .bg-gray-100 { background-color: #f1f5f9 !important; }
+            .bg-slate-200, .bg-gray-200 { background-color: #e2e8f0 !important; }
+            .bg-orange-50 { background-color: #fff7ed !important; }
+            .bg-orange-100 { background-color: #ffedd5 !important; }
+            .bg-amber-50 { background-color: #fffbeb !important; }
+            .bg-amber-100 { background-color: #fef3c7 !important; }
+            .bg-green-50 { background-color: #f0fdf4 !important; }
+            .bg-green-100 { background-color: #dcfce7 !important; }
+            .bg-blue-50 { background-color: #eff6ff !important; }
+            .bg-blue-100 { background-color: #dbeafe !important; }
+            .bg-red-50 { background-color: #fef2f2 !important; }
+            .bg-red-100 { background-color: #fee2e2 !important; }
+            .bg-yellow-50 { background-color: #fefce8 !important; }
+            .bg-yellow-100 { background-color: #fef9c3 !important; }
+            
+            .text-slate-900, .text-gray-900 { color: #0f172a !important; }
+            .text-slate-800, .text-gray-800 { color: #1e293b !important; }
+            .text-slate-700, .text-gray-700 { color: #334155 !important; }
+            .text-slate-600, .text-gray-600 { color: #475569 !important; }
+            .text-slate-500, .text-gray-500 { color: #64748b !important; }
+            .text-slate-400, .text-gray-400 { color: #94a3b8 !important; }
+            .text-orange-600 { color: #ea580c !important; }
+            .text-orange-700 { color: #c2410c !important; }
+            .text-orange-800 { color: #9a3412 !important; }
+            .text-amber-600 { color: #d97706 !important; }
+            .text-amber-700 { color: #b45309 !important; }
+            .text-green-600 { color: #16a34a !important; }
+            .text-green-700 { color: #15803d !important; }
+            .text-blue-600 { color: #2563eb !important; }
+            .text-blue-700 { color: #1d4ed8 !important; }
+            .text-blue-800 { color: #1e40af !important; }
+            .text-red-600 { color: #dc2626 !important; }
+            .text-red-700 { color: #b91c1c !important; }
+            
+            .border-slate-200, .border-gray-200 { border-color: #e2e8f0 !important; }
+            .border-slate-300, .border-gray-300 { border-color: #cbd5e1 !important; }
+            .border-orange-200 { border-color: #fed7aa !important; }
+            .border-orange-300 { border-color: #fdba74 !important; }
+            .border-amber-200 { border-color: #fde68a !important; }
+            .border-green-200 { border-color: #bbf7d0 !important; }
+            .border-blue-200 { border-color: #bfdbfe !important; }
+            
+            /* Ensure all ring colors are sRGB */
+            .ring-amber-500 { --tw-ring-color: #f59e0b !important; }
+            .ring-orange-500 { --tw-ring-color: #f97316 !important; }
           `;
           doc.head.appendChild(style);
         },
