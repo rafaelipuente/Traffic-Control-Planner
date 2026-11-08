@@ -1,0 +1,34 @@
+# Render Blueprint for TCP Backend
+# Deploy: https://dashboard.render.com/select-repo?type=blueprint
+
+services:
+  - type: web
+    name: tcp-backend
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: |
+      cd backend && pip install -r requirements.txt
+    startCommand: |
+      cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tcp-db
+          property: connectionString
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        value: https://your-vercel-app.vercel.app
+      - key: ENVIRONMENT
+        value: production
+
+databases:
+  - name: tcp-db
+    plan: free
+    region: oregon
+    databaseName: tcp_db
+    user: tcp_user
