@@ -205,6 +205,13 @@ async def approve_plan(
     if not membership or membership.role not in [OrgRole.tcs_approver, OrgRole.engineer_approver]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Approver role required")
     
+    # Approver cannot be the plan author
+    if plan.created_by == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Approver cannot be the same user who created the plan",
+        )
+    
     # Verify credential
     credential = db.query(Credential).filter(
         Credential.id == approval_data.credential_id,
