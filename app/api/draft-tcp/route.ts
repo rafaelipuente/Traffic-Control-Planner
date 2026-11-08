@@ -6,19 +6,17 @@ import {
   TcpPlan,
   tcpDraftRequestSchema,
   CoverageInfo,
-  CoverageCitation,
 } from "@/lib/tcpTypes";
 import {
   RetrievalQueryContext,
   formatCitation,
   retrieveSupport,
-  SourceChunk,
 } from "@/lib/retrieval";
+import { RulesEngine, SiteFacts } from "@/lib/rules/engine";
 
 export const runtime = "nodejs";
 
-const MODEL_API_URL =
-  process.env.OPENAI_BASE_URL || "https://api.openai.com/v1/chat/completions";
+const BACKEND_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5555";
 
 type ErrorBody = Record<string, unknown>;
 
@@ -57,121 +55,6 @@ function validateGeometry(req: TcpDraftRequest): string[] {
   return issues;
 }
 
-function validateDraftResponse(
-  candidate: unknown
-): { ok: true; value: TcpDraftResponse } | { ok: false; issues: string[] } {
-  const issues: string[] = [];
-
-  if (typeof candidate !== "object" || candidate === null) {
-    return { ok: false, issues: ["Model output is not an object"] };
-  }
-
-  const obj = candidate as Record<string, unknown>;
-
-  if (typeof obj.summary !== "string") {
-    issues.push("summary must be a string");
-  }
-
-  if (typeof obj.svgContent !== "string") {
-    issues.push("svgContent must be a string");
-  } else if (obj.svgContent.length > MAX_SVG_LENGTH) {
-    issues.push("svgContent exceeds maximum length");
-  }
-
-  if (!Array.isArray(obj.assumptions)) {
-    issues.push("assumptions must be an array of strings");
-  } else if (!obj.assumptions.every((a) => typeof a === "string")) {
-    issues.push("assumptions must contain only strings");
-  }
-
-  if (!Array.isArray(obj.references)) {
-    issues.push("references must be an array of strings");
-  } else if (!obj.references.every((r) => typeof r === "string")) {
-    issues.push("references must contain only strings");
-  }
-
-  if (typeof obj.plan !== "object" || obj.plan === null) {
-    issues.push("plan must be an object");
-  } else {
-    const plan = obj.plan as Record<string, unknown>;
-
-    if (typeof plan.recommendedLayout !== "string") {
-      issues.push("plan.recommendedLayout must be a string");
-    }
-
-    if (!Array.isArray(plan.signSpacing)) {
-      issues.push("plan.signSpacing must be an array");
-    } else {
-      const labels = new Set<string>();
-      for (const [index, item] of (plan.signSpacing as unknown[]).entries()) {
-        const path = `plan.signSpacing[${index}]`;
-        if (typeof item !== "object" || item === null) {
-          issues.push(`${path} must be an object`);
-          continue;
-        }
-        const s = item as Record<string, unknown>;
-        if (s.label !== "A" && s.label !== "B" && s.label !== "C") {
-          issues.push(`${path}.label must be \"A\", \"B\", or \"C\"`);
-        } else {
-          labels.add(s.label as string);
-        }
-        if (typeof s.distanceFt !== "number" || !Number.isFinite(s.distanceFt)) {
-          issues.push(`${path}.distanceFt must be a finite number`);
-        }
-      }
-      ["A", "B", "C"].forEach((label) => {
-        if (!labels.has(label)) {
-          issues.push(`plan.signSpacing must include label ${label}`);
-        }
-      });
-    }
-
-    if (
-      typeof plan.taperLengthFt !== "number" ||
-      !Number.isFinite(plan.taperLengthFt) ||
-      plan.taperLengthFt <= 0
-    ) {
-      issues.push("plan.taperLengthFt must be a number > 0");
-    }
-
-    if (
-      typeof plan.bufferLengthFt !== "number" ||
-      !Number.isFinite(plan.bufferLengthFt) ||
-      plan.bufferLengthFt <= 0
-    ) {
-      issues.push("plan.bufferLengthFt must be a number > 0");
-    }
-
-    if (typeof plan.devices !== "object" || plan.devices === null) {
-      issues.push("plan.devices must be an object");
-    } else {
-      const d = plan.devices as Record<string, unknown>;
-      if (typeof d.cones !== "number" || !Number.isFinite(d.cones) || d.cones < 0) {
-        issues.push("plan.devices.cones must be a number >= 0");
-      }
-      if (typeof d.signs !== "number" || !Number.isFinite(d.signs) || d.signs < 0) {
-        issues.push("plan.devices.signs must be a number >= 0");
-      }
-      if (typeof d.arrowBoard !== "boolean") {
-        issues.push("plan.devices.arrowBoard must be a boolean");
-      }
-      if (
-        typeof d.flaggers !== "number" ||
-        !Number.isFinite(d.flaggers) ||
-        d.flaggers < 0
-      ) {
-        issues.push("plan.devices.flaggers must be a number >= 0");
-      }
-    }
-  }
-
-  if (issues.length > 0) {
-    return { ok: false, issues };
-  }
-
-  return { ok: true, value: obj as TcpDraftResponse };
-}
-
 function buildRetrievalContext(req: TcpDraftRequest): RetrievalQueryContext {
   return {
     roadType: req.roadType,
@@ -184,376 +67,111 @@ function buildRetrievalContext(req: TcpDraftRequest): RetrievalQueryContext {
 }
 
 /**
- * Provides MUTCD-based fallback guidance when no handbook chunks are found.
- * Based on MUTCD Table 6C-2 for sign spacing and standard taper/buffer calculations.
+ * Map road type string to road_context for the rules engine.
  */
-function buildFallbackGuidance(speedMph: number): string {
-  // MUTCD Table 6C-2 approximate values for sign spacing (A, B, C distances)
-  let signSpacingA: number;
-  let signSpacingB: number;
-  let signSpacingC: number;
-
-  if (speedMph <= 25) {
-    signSpacingA = 100;
-    signSpacingB = 100;
-    signSpacingC = 100;
-  } else if (speedMph <= 35) {
-    signSpacingA = 350;
-    signSpacingB = 350;
-    signSpacingC = 350;
-  } else if (speedMph <= 45) {
-    signSpacingA = 500;
-    signSpacingB = 500;
-    signSpacingC = 500;
-  } else if (speedMph <= 55) {
-    signSpacingA = 500;
-    signSpacingB = 500;
-    signSpacingC = 500;
-  } else {
-    signSpacingA = 1000;
-    signSpacingB = 1500;
-    signSpacingC = 2640;
+function mapRoadContext(roadType: string, speedMph: number): string {
+  if (roadType === "intersection") {
+    return speedMph <= 35 ? "urban_low_speed" : "urban_high_speed";
   }
-
-  // Taper length: L = W × S (where W is lane width ~12ft and S is speed in mph)
-  // Simplified: approximately speed × 10 for speeds under 45, speed × 15 for higher
-  const taperLengthFt = speedMph <= 45 ? speedMph * 10 : speedMph * 15;
-
-  // Buffer space: typically 50-100ft minimum, scale with speed
-  const bufferLengthFt = Math.max(50, speedMph * 2);
-
-  return `[FALLBACK] MUTCD General Defaults (Table 6C-2 approximation)
-No specific handbook guidance was found for this scenario. Using MUTCD general defaults:
-
-Sign Spacing (based on ${speedMph} mph):
-- Distance A (first warning sign): ${signSpacingA} ft
-- Distance B (second warning sign): ${signSpacingB} ft
-- Distance C (third warning sign): ${signSpacingC} ft
-
-Taper Length: ${taperLengthFt} ft (based on lane width × speed factor)
-Buffer Space: ${bufferLengthFt} ft minimum
-
-Device recommendations:
-- Cones: 20-30 for typical work zone
-- Signs: 4-8 depending on approach directions
-- Arrow board: Recommended for speeds > 35 mph
-- Flaggers: Required for intersection or complex work
-
-Reference: MUTCD Chapter 6C, Table 6C-2
-
-IMPORTANT: These are fallback defaults. The planner should verify these values against local jurisdiction requirements.`;
+  if (roadType === "multilane_divided") {
+    return speedMph >= 50 ? "expressway_freeway" : "urban_high_speed";
+  }
+  // 2_lane_undivided
+  return speedMph <= 35 ? "urban_low_speed" : "rural";
 }
 
 /**
- * COVERAGE GATE: Semantic-aware check to verify handbook chunks contain critical guidance.
- * Returns coverage status for spacing, taper, buffer, and devices.
- * 
- * IMPROVED PATTERNS: Match real handbook terminology from MUTCD, OTTCH, and local manuals.
+ * Call the backend rules engine for deterministic computation.
+ * ALL numeric values come from here, not from the LLM.
  */
-function analyzeHandbookCoverage(handbookChunks: SourceChunk[]): CoverageInfo {
-  const coverage: CoverageInfo = {
-    spacing: false,
-    taper: false,
-    buffer: false,
-    devices: false,
-    citations: [],
-  };
+async function computeViaBackendEngine(req: TcpDraftRequest): Promise<{
+  computation: TcpPlan;
+  citations: Array<{ field: string; citation: string }>;
+  refused?: string[];
+} | null> {
+  try {
+    const siteFacts = {
+      posted_or_statutory_speed_mph: req.postedSpeedMph,
+      speed_basis: "posted",
+      road_context: mapRoadContext(req.roadType, req.postedSpeedMph),
+      lane_count: req.roadType === "2_lane_undivided" ? 2 : 4,
+      opposing_directions: true,
+      lane_width_ft: 12,
+      work_length_ft: req.workLengthFt,
+      is_night: req.isNight,
+    };
 
-  // IMPROVED Regex patterns for each category (case-insensitive)
-  // These are designed to match actual handbook terminology
-  
-  // SPACING: Match advance warning area, sign spacing, A/B/C distances, tables
-  const spacingPatterns = [
-    /advance\s*warning\s*(area|zone|signs?)?/i,
-    /warning\s*(area|zone|signs?)/i,
-    /sign\s*spacing/i,
-    /spacing/i,
-    /[ABC]\s*[:=]\s*\d+/i,  // A: 350, B = 500, etc.
-    /distance\s*[ABC]/i,
-    /Table\s*(6C-?\d|2-?\d)/i,  // Table 6C-2, Table 2-4
-    /A,?\s*B,?\s*(and\s*)?C/i,
-  ];
-  
-  // TAPER: Match taper terms, transition area, L= formula
-  const taperPatterns = [
-    /taper\s*(length|type|formula)?/i,
-    /merging\s*taper/i,
-    /shifting\s*taper/i,
-    /shoulder\s*taper/i,
-    /transition\s*(area|zone)/i,
-    /L\s*[=:]\s*\d+/i,  // L = 180, L: 200
-    /taper.*\d+\s*(ft|feet|')/i,  // taper 180 ft
-    /\d+\s*(ft|feet|')\s*taper/i,  // 180 ft taper
-  ];
-  
-  // BUFFER: Match buffer space, longitudinal buffer, stopping/braking distance
-  const bufferPatterns = [
-    /buffer\s*(space|area|length|zone)?/i,
-    /longitudinal\s*buffer/i,
-    /stopping\s*distance/i,
-    /braking\s*distance/i,
-    /clear\s*(zone|space)/i,
-    /activity\s*area/i,
-    /work\s*(space|area|zone)/i,
-  ];
-  
-  // DEVICES: Match channelizing devices, cones, drums, signs, arrow boards, flaggers
-  const devicesPatterns = [
-    /channelizing\s*devices?/i,
-    /\bcones?\b/i,
-    /\bdrums?\b/i,
-    /barricades?/i,
-    /arrow\s*(board|panel)/i,
-    /\bflaggers?\b/i,
-    /delineators?/i,
-    /traffic\s*control\s*devices?/i,
-    /\bsigns?\b/i,
-  ];
+    // Call local rules engine directly (no network call needed for Phase 1)
+    // In production, this would call the FastAPI backend
+    const engine = new RulesEngine();
+    const facts: SiteFacts = {
+      posted_or_statutory_speed_mph: siteFacts.posted_or_statutory_speed_mph,
+      speed_basis: siteFacts.speed_basis as "posted" | "off_peak_85th" | "anticipated",
+      road_context: siteFacts.road_context as "urban_low_speed" | "urban_high_speed" | "rural" | "expressway_freeway",
+      lane_count: siteFacts.lane_count,
+      opposing_directions: siteFacts.opposing_directions,
+      lane_width_ft: siteFacts.lane_width_ft,
+      work_length_ft: siteFacts.work_length_ft,
+      is_night: siteFacts.is_night,
+      control_method: "flaggers",
+      uses_ottch_short_term: true,
+      jurisdiction: "OR",
+      duration_days: 1,
+    };
 
-  // Helper to check if any pattern matches
-  const matchesAny = (text: string, patterns: RegExp[]): boolean => {
-    return patterns.some(p => p.test(text));
-  };
+    const result = engine.compute(facts);
 
-  for (const chunk of handbookChunks) {
-    const text = chunk.text;
-
-    // Check spacing
-    if (!coverage.spacing && matchesAny(text, spacingPatterns)) {
-      coverage.spacing = true;
-      coverage.citations.push({
-        category: "spacing",
-        docName: chunk.docName,
-        page: chunk.pageNumber ?? undefined,
-        snippet: text.slice(0, 150),
-      });
+    if (result.refused_reasons.length > 0) {
+      return {
+        computation: {
+          recommendedLayout: "REFUSED",
+          signSpacing: [
+            { label: "A" as const, distanceFt: 0 },
+            { label: "B" as const, distanceFt: 0 },
+            { label: "C" as const, distanceFt: 0 },
+          ],
+          taperLengthFt: 0,
+          bufferLengthFt: 0,
+          devices: { cones: 0, signs: 0, arrowBoard: false, flaggers: 0 },
+        },
+        citations: [],
+        refused: result.refused_reasons,
+      };
     }
 
-    // Check taper (single pattern match is sufficient with improved patterns)
-    if (!coverage.taper && matchesAny(text, taperPatterns)) {
-      coverage.taper = true;
-      coverage.citations.push({
-        category: "taper",
-        docName: chunk.docName,
-        page: chunk.pageNumber ?? undefined,
-        snippet: text.slice(0, 150),
-      });
-    }
+    // Convert engine result to TcpPlan format
+    const plan: TcpPlan = {
+      recommendedLayout: `OTTCH Diagram 320 / MUTCD Figure 6P-10`,
+      signSpacing: [
+        { label: "A" as const, distanceFt: Number(result.spacing_A_ft.value) },
+        { label: "B" as const, distanceFt: Number(result.spacing_B_ft.value) },
+        { label: "C" as const, distanceFt: Number(result.spacing_C_ft.value) },
+      ],
+      taperLengthFt: Number(result.taper_length_ft.value),
+      bufferLengthFt: Number(result.buffer_length_ft.value),
+      devices: {
+        cones: Number(result.cones_per_taper.value) * 2 + Number(result.cones_tangent.value),
+        signs: result.signs_count,
+        arrowBoard: result.arrow_board_required,
+        flaggers: Number(result.flagger_count.value),
+      },
+    };
 
-    // Check buffer
-    if (!coverage.buffer && matchesAny(text, bufferPatterns)) {
-      coverage.buffer = true;
-      coverage.citations.push({
-        category: "buffer",
-        docName: chunk.docName,
-        page: chunk.pageNumber ?? undefined,
-        snippet: text.slice(0, 150),
-      });
-    }
+    // Collect citations
+    const citations = [
+      { field: "spacing_A_ft", citation: `${result.spacing_A_ft.citation.source_doc} ${result.spacing_A_ft.citation.source_ref}` },
+      { field: "spacing_B_ft", citation: `${result.spacing_B_ft.citation.source_doc} ${result.spacing_B_ft.citation.source_ref}` },
+      { field: "spacing_C_ft", citation: `${result.spacing_C_ft.citation.source_doc} ${result.spacing_C_ft.citation.source_ref}` },
+      { field: "taper_length_ft", citation: `${result.taper_length_ft.citation.source_doc} ${result.taper_length_ft.citation.source_ref}` },
+      { field: "buffer_length_ft", citation: `${result.buffer_length_ft.citation.source_doc} ${result.buffer_length_ft.citation.source_ref}` },
+      { field: "flagger_count", citation: `${result.flagger_count.citation.source_doc} ${result.flagger_count.citation.source_ref}` },
+    ];
 
-    // Check devices
-    if (!coverage.devices && matchesAny(text, devicesPatterns)) {
-      coverage.devices = true;
-      coverage.citations.push({
-        category: "devices",
-        docName: chunk.docName,
-        page: chunk.pageNumber ?? undefined,
-        snippet: text.slice(0, 150),
-      });
-    }
-
-    // Early exit if all found
-    if (coverage.spacing && coverage.taper && coverage.buffer && coverage.devices) {
-      break;
-    }
+    return { computation: plan, citations };
+  } catch (error) {
+    console.error("[draft-tcp] Backend engine error:", error);
+    return null;
   }
-
-  console.log("[coverage-gate] Analysis result:", {
-    spacing: coverage.spacing,
-    taper: coverage.taper,
-    buffer: coverage.buffer,
-    devices: coverage.devices,
-    citationCount: coverage.citations.length,
-  });
-
-  return coverage;
-}
-
-/**
- * Log detailed debug info when coverage gate fails.
- */
-function logCoverageGateDebug(
-  handbookChunks: SourceChunk[],
-  coverage: CoverageInfo,
-  missingCritical: string[]
-): void {
-  console.log("[coverage-gate] ========== DEBUG: COVERAGE GATE BLOCKED ==========");
-  console.log("[coverage-gate] Missing categories:", missingCritical.join(", "));
-  console.log("[coverage-gate] Total handbook chunks retrieved:", handbookChunks.length);
-  
-  console.log("[coverage-gate] Coverage status:");
-  console.log("  - Spacing:", coverage.spacing);
-  console.log("  - Taper:", coverage.taper);
-  console.log("  - Buffer:", coverage.buffer);
-  console.log("  - Devices:", coverage.devices);
-  
-  console.log("[coverage-gate] Top 5 handbook chunks:");
-  handbookChunks.slice(0, 5).forEach((chunk, idx) => {
-    const sanitizedText = chunk.text
-      .replace(/\s+/g, " ")
-      .slice(0, 200);
-    console.log(`  [${idx + 1}] ${chunk.docName} p.${chunk.pageNumber ?? "?"}`);
-    console.log(`      Score: ${(chunk as { score?: number }).score ?? "N/A"}`);
-    console.log(`      Text: "${sanitizedText}..."`);
-  });
-  
-  console.log("[coverage-gate] ===================================================");
-}
-
-/**
- * Check if critical coverage (spacing, taper, buffer) is missing.
- * Returns list of missing categories, or empty array if all critical coverage is present.
- */
-function getMissingCriticalCoverage(coverage: CoverageInfo): ("spacing" | "taper" | "buffer")[] {
-  const missing: ("spacing" | "taper" | "buffer")[] = [];
-  if (!coverage.spacing) missing.push("spacing");
-  if (!coverage.taper) missing.push("taper");
-  if (!coverage.buffer) missing.push("buffer");
-  return missing;
-}
-
-function buildSystemPrompt(deviceWarning: boolean = false): string {
-  const lines = [
-    "You are a traffic control planning assistant.",
-    "You draft temporary traffic control plans strictly based on the provided handbook and example excerpts.",
-    "",
-    "Rules:",
-    "- Use ONLY the provided handbook (HB::...) and example (EX::...) excerpts for numeric rules and layout patterns.",
-    "- Do NOT use any outside knowledge beyond these excerpts.",
-    "- Handbooks (HB) always override examples (EX) when there is any conflict.",
-    "- Every numeric value for sign spacing (A/B/C), taperLengthFt, bufferLengthFt, and device counts must be traceable to at least one provided excerpt.",
-    "- For each such numeric field, include at least one matching citation string in the references array.",
-    "- If you cannot find applicable guidance for any required numeric field in the excerpts, use reasonable MUTCD defaults and note this in assumptions[].",
-  ];
-
-  // Inject device warning if handbook guidance for devices is missing
-  if (deviceWarning) {
-    lines.push("");
-    lines.push("⚠️ DEVICE GUIDANCE MISSING: Handbook guidance for device counts (cones, signs, flaggers) was NOT found in the provided excerpts. Use conservative industry defaults for device counts and MARK THIS AS AN ASSUMPTION in the assumptions[] array. Be explicit: \"Device counts are estimates based on general MUTCD guidance; specific handbook values not available.\"");
-  }
-
-  lines.push(
-    "",
-    "Planner Notes (HIGH PRIORITY):",
-    "- Treat planner notes as intentional guidance from a human planner.",
-    "- Planner notes may add constraints, override defaults, add safety considerations, or request specific devices, layouts, or handling.",
-    "- Incorporate planner notes wherever possible.",
-    "- If planner notes conflict with handbook rules, handbook rules still win, but you MUST state the conflict clearly in assumptions[].",
-    "- When planner notes materially influence the plan, include an assumption like: \"Planner notes requested X; plan adjusted by Y.\"",
-    "- If planner notes could not be applied, state why in assumptions[] (e.g., conflicts with handbook guidance).",
-    "",
-    "Citation format for references:",
-    '- Handbooks:  "HB::<docName>::p<pageNumber>::<sectionOrTableId>"',
-    '- Examples:   "EX::<docName>::p<pageNumber>::<figureId>"',
-    "",
-    "=== STRICT OUTPUT REQUIREMENTS ===",
-    "You MUST output a single JSON object only. No markdown, no backticks, no text before or after.",
-    "",
-    "REQUIRED FIELDS (all must be present):",
-    "- summary: string (short description of the plan)",
-    "- plan: object with ALL sub-fields below",
-    "- plan.recommendedLayout: string (e.g., \"Typical Application 6C-2\")",
-    "- plan.signSpacing: array with EXACTLY 3 objects for labels \"A\", \"B\", \"C\" (uppercase)",
-    "  - Each object: { \"label\": \"A\"|\"B\"|\"C\", \"distanceFt\": number }",
-    "  - distanceFt must be a NUMBER (not string), e.g., 350 not \"350\"",
-    "- plan.taperLengthFt: number > 0",
-    "- plan.bufferLengthFt: number > 0",
-    "- plan.devices: object with cones (number >= 0), signs (number >= 0), arrowBoard (boolean), flaggers (number >= 0)",
-    "- assumptions: string[] (array of strings)",
-    "- references: string[] (array of citation strings)",
-    "- svgContent: string - MUST be exactly \"<svg></svg>\" (server generates the real SVG)",
-    "",
-    "EXAMPLE OUTPUT (use this exact structure):",
-    '{',
-    '  "summary": "Lane closure TCP for 35 mph 2-lane road, daytime work.",',
-    '  "plan": {',
-    '    "recommendedLayout": "Typical Application 6C-2",',
-    '    "signSpacing": [',
-    '      { "label": "A", "distanceFt": 350 },',
-    '      { "label": "B", "distanceFt": 350 },',
-    '      { "label": "C", "distanceFt": 350 }',
-    '    ],',
-    '    "taperLengthFt": 180,',
-    '    "bufferLengthFt": 100,',
-    '    "devices": { "cones": 20, "signs": 6, "arrowBoard": true, "flaggers": 0 }',
-    '  },',
-    '  "assumptions": ["Based on 35 mph posted speed.", "Daytime work assumed."],',
-    '  "references": ["HB::mutcd::p123::Table6C-2"],',
-    '  "svgContent": "<svg></svg>"',
-    '}',
-    "",
-    "CRITICAL REMINDERS:",
-    "- signSpacing MUST include all three labels: A, B, and C",
-    "- All numeric values must be JSON numbers, not strings",
-    "- arrowBoard must be true or false (boolean), not a string",
-    "- svgContent MUST be \"<svg></svg>\" - the server overwrites it"
-  );
-
-  return lines.join("\n");
-}
-
-function buildContextPrompt(handbookText: string, exampleText: string): string {
-  return [
-    "You are given excerpts from official TCP handbooks (HB) and real TCP examples (EX).",
-    "Use handbooks for authoritative numeric rules, and examples only for pattern/context.",
-    "",
-    "=== HANDBOOK EXCERPTS (HB) ===",
-    handbookText || "(none)",
-    "",
-    "=== EXAMPLE EXCERPTS (EX) ===",
-    exampleText || "(none)",
-  ].join("\n");
-}
-
-function buildUserPrompt(req: TcpDraftRequest): string {
-  const { geometry, locationLabel, roadType, postedSpeedMph, workType, workLengthFt, isNight, notes } =
-    req;
-
-  const parts: string[] = [];
-  parts.push("Draft a temporary traffic control plan for the following job.");
-  parts.push("");
-  parts.push(
-    `Location: ${locationLabel ?? "unspecified label"}, roadType=${roadType}, speed=${postedSpeedMph} mph, workType=${workType}, workLength=${workLengthFt} ft, time=${
-      isNight ? "night" : "day"
-    }.`
-  );
-
-  if (geometry.type === "bbox" && geometry.bbox) {
-    const [west, south, east, north] = geometry.bbox;
-    parts.push(
-      `Geometry: bbox [west=${west}, south=${south}, east=${east}, north=${north}] (units: degrees longitude/latitude).`
-    );
-  } else if (geometry.type === "polygon" && geometry.polygon) {
-    parts.push(
-      `Geometry: polygon with ${geometry.polygon[0]?.length ?? 0} vertices (unclosed ring, coordinates [lng,lat]).`
-    );
-  }
-
-  if (notes) {
-    parts.push("");
-    parts.push("=== PLANNER NOTES (HIGH PRIORITY) ===");
-    parts.push(notes);
-    parts.push("=== END PLANNER NOTES ===");
-    parts.push("");
-    parts.push("Remember: Incorporate planner notes where possible and document how they affected the plan in assumptions[].");
-  }
-
-  parts.push("");
-  parts.push(
-    "You must base all numeric values on the provided handbook excerpts. If suitable guidance is missing for any required numeric field, you must say so in assumptions and you must not invent values."
-  );
-
-  return parts.join("\n");
 }
 
 function generateSvgFromPlan(plan: TcpPlan): string {
@@ -573,15 +191,13 @@ function generateSvgFromPlan(plan: TcpPlan): string {
 
   const workZoneHeight = Math.min(120, height / 3);
   const workZoneTop = height / 2 - workZoneHeight / 2;
-  const workZoneBottom = workZoneTop + workZoneHeight;
 
   const bufferPx = plan.bufferLengthFt * scale;
   const taperPx = plan.taperLengthFt * scale;
 
-  const workZoneStartY = workZoneTop;
-  const taperEndY = workZoneStartY;
+  const taperEndY = workZoneTop;
   const taperStartY = taperEndY + taperPx;
-  const bufferStartY = tapperClamp(taperStartY + bufferPx, roadTop, roadBottom);
+  const bufferStartY = clamp(taperStartY + bufferPx, roadTop, roadBottom);
 
   const a = plan.signSpacing.find((s) => s.label === "A");
   const b = plan.signSpacing.find((s) => s.label === "B");
@@ -628,7 +244,7 @@ function generateSvgFromPlan(plan: TcpPlan): string {
   return svg.length > MAX_SVG_LENGTH ? svg.slice(0, MAX_SVG_LENGTH) : svg;
 }
 
-function tapperClamp(value: number, min: number, max: number): number {
+function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
@@ -698,347 +314,80 @@ export async function POST(req: NextRequest) {
 
   const tcpReq = parsedReq.data as TcpDraftRequest;
 
-  const missingEnv: string[] = [];
-  if (!process.env.OPENAI_API_KEY) missingEnv.push("OPENAI_API_KEY");
-  if (!process.env.OPENAI_MODEL) missingEnv.push("OPENAI_MODEL");
+  console.log("[draft-tcp] Processing request for:", {
+    roadType: tcpReq.roadType,
+    workType: tcpReq.workType,
+    speedMph: tcpReq.postedSpeedMph,
+    isNight: tcpReq.isNight,
+  });
 
-  if (missingEnv.length > 0) {
+  // PHASE 1: Use backend rules engine for ALL numeric values
+  const engineResult = await computeViaBackendEngine(tcpReq);
+
+  if (!engineResult) {
     return jsonError(500, {
-      error: "Missing environment configuration",
-      details: { missing: missingEnv },
+      error: "Rules engine computation failed",
+      details: { message: "Unable to compute plan values" },
     });
   }
 
-  const retrievalCtx = buildRetrievalContext(tcpReq);
-
-  const { handbookChunks, exampleChunks } = await retrieveSupport(retrievalCtx);
-
-  // ===== COVERAGE GATE: Analyze handbook chunks for critical guidance =====
-  const coverage = analyzeHandbookCoverage(handbookChunks);
-  const missingCritical = getMissingCriticalCoverage(coverage);
-
-  // SAFETY KILL SWITCH: Block LLM call if critical coverage is missing
-  if (missingCritical.length > 0) {
-    // Log detailed debug info for troubleshooting
-    logCoverageGateDebug(handbookChunks, coverage, missingCritical);
-    
-    return jsonError(500, {
-      error: "Missing handbook guidance",
+  if (engineResult.refused) {
+    return jsonError(422, {
+      error: "Plan computation refused",
       details: {
-        missing: missingCritical,
-        coverage,
-        message: `Cannot generate plan: The following mandatory handbook rules were not found in the current knowledge base: ${missingCritical.join(", ")}. Please ensure handbook documents contain guidance for sign spacing, taper lengths, and buffer distances.`,
+        reasons: engineResult.refused,
+        message: "The requested configuration is outside the supported scope for Phase 1",
       },
     });
   }
-  
-  // Log success for debugging
-  console.log("[coverage-gate] PASSED: All critical coverage found");
-  console.log("[coverage-gate] Citations:", coverage.citations.map(c => `${c.category}: ${c.docName} p.${c.page}`));
 
-  // Track if devices guidance is missing (non-blocking, but inject warning)
-  const deviceWarning = !coverage.devices;
-  if (deviceWarning) {
-    console.log("[coverage-gate] WARNING: Device guidance missing, will inject LLM instruction");
-  }
+  const plan = engineResult.computation;
+  const svgContent = generateSvgFromPlan(plan);
 
-  // Track if we're using fallback defaults
-  const usingFallbackDefaults = handbookChunks.length === 0;
+  // Build references from engine citations
+  const references = engineResult.citations.map(
+    (c) => `${c.field}: ${c.citation}`
+  );
 
-  if (usingFallbackDefaults) {
-    console.log("[draft-tcp] No handbook match found, using MUTCD fallback defaults:");
-    console.log(`  - roadType: ${tcpReq.roadType}`);
-    console.log(`  - workType: ${tcpReq.workType}`);
-    console.log(`  - speedMph: ${tcpReq.postedSpeedMph}`);
-  }
+  // Build assumptions list
+  const assumptions: string[] = [
+    "All numeric values computed by deterministic rules engine (not LLM)",
+    `Posted speed: ${tcpReq.postedSpeedMph} mph`,
+    `Road type: ${tcpReq.roadType}`,
+    `Work type: ${tcpReq.workType}`,
+    tcpReq.isNight ? "Night operation" : "Daytime operation",
+  ];
 
-  // Build handbook text or provide fallback guidance
-  const handbookText = handbookChunks.length > 0
-    ? handbookChunks
-        .map(
-          (c, idx) =>
-            `[HB${idx + 1}] ${formatCitation(c)}\n${c.text.slice(0, 1200)}`
-        )
-        .join("\n\n")
-    : buildFallbackGuidance(tcpReq.postedSpeedMph);
-
-  const exampleText = exampleChunks
-    .map(
-      (c, idx) =>
-        `[EX${idx + 1}] ${formatCitation(c)}\n${c.text.slice(0, 800)}`
-    )
-    .join("\n\n");
-
-  const systemPrompt = buildSystemPrompt(deviceWarning);
-  const contextPrompt = buildContextPrompt(handbookText, exampleText);
-  const userPrompt = buildUserPrompt(tcpReq);
-
-  const apiKey = process.env.OPENAI_API_KEY as string;
-  const model = process.env.OPENAI_MODEL as string;
-
-  // Validate model name format (warn on suspicious names)
-  const knownModels = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo", "o1", "o1-mini", "o1-preview"];
-  const isKnownModel = knownModels.some(m => model.startsWith(m));
-  if (!isKnownModel) {
-    console.warn(`[draft-tcp] Warning: Model "${model}" is not a recognized OpenAI model. Known models: ${knownModels.join(", ")}`);
-  }
-
-  // Combine system + context into a single system message for better compatibility
-  const combinedSystemPrompt = `${systemPrompt}\n\n${contextPrompt}`;
-
-  const requestBody = {
-    model,
-    messages: [
-      { role: "system", content: combinedSystemPrompt },
-      { role: "user", content: userPrompt },
-    ],
-    temperature: 0.1,
+  // Build coverage info
+  const coverage: CoverageInfo = {
+    spacing: true,
+    taper: true,
+    buffer: true,
+    devices: true,
+    citations: references.map((ref) => ({
+      category: "spacing" as const,
+      docName: ref.split(":")[1]?.trim().split(" ")[0] || "MUTCD",
+      snippet: ref,
+    })),
   };
 
-  console.log("[draft-tcp] Calling model API:", MODEL_API_URL);
-  console.log("[draft-tcp] Model:", model);
-  console.log("[draft-tcp] System prompt length:", combinedSystemPrompt.length);
-  console.log("[draft-tcp] User prompt length:", userPrompt.length);
-
-  let response: Response;
-  try {
-    response = await fetch(MODEL_API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(requestBody),
-    });
-  } catch (fetchError) {
-    const errMsg = fetchError instanceof Error ? fetchError.message : String(fetchError);
-    console.error("[draft-tcp] Fetch error:", errMsg);
-    return jsonError(502, {
-      error: "Model API error",
-      status: 502,
-      details: {
-        upstreamStatus: 0,
-        upstreamBody: `Network error: ${errMsg}`.slice(0, 2000),
-      },
-    });
-  }
-
-  if (!response.ok) {
-    const upstreamBody = await response.text();
-    const requestId = response.headers.get("x-request-id") || response.headers.get("request-id");
-    
-    // Server-side logging for debugging
-    console.error("[draft-tcp] Model API error:");
-    console.error("  - upstream status:", response.status);
-    console.error("  - upstream body:", upstreamBody.slice(0, 2000));
-    if (requestId) {
-      console.error("  - request id:", requestId);
-    }
-
-    // Extract the actual error message from OpenAI response for clearer UI display
-    let errorMessage = "Model API error";
-    let errorCode: string | undefined;
-    try {
-      const parsed = JSON.parse(upstreamBody);
-      if (parsed?.error?.message) {
-        errorMessage = parsed.error.message;
-        errorCode = parsed.error.code;
-      }
-    } catch {
-      // Keep default error message if parsing fails
-    }
-
-    // Provide actionable error messages for common issues
-    if (response.status === 429) {
-      errorMessage = `OpenAI quota exceeded: ${errorMessage}`;
-    } else if (response.status === 401) {
-      errorMessage = `Invalid API key: ${errorMessage}`;
-    } else if (response.status === 404) {
-      errorMessage = `Model "${model}" not found. Check OPENAI_MODEL in .env.local. Valid models: gpt-4o, gpt-4-turbo, gpt-3.5-turbo`;
-    }
-
-    return jsonError(502, {
-      error: errorMessage,
-      status: 502,
-      details: {
-        upstreamStatus: response.status,
-        upstreamBody: upstreamBody.slice(0, 2000),
-        ...(requestId && { requestId }),
-        ...(errorCode && { errorCode }),
-      },
-    });
-  }
-
-  let completionJson: unknown;
-  try {
-    completionJson = await response.json();
-  } catch (parseErr) {
-    const errMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
-    console.error("[draft-tcp] Failed to parse API response as JSON:", errMsg);
-    return jsonError(500, {
-      error: "Invalid JSON from model",
-      rawText: `Failed to parse API response: ${errMsg}`,
-    });
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rawText: string = (completionJson as any)?.choices?.[0]?.message?.content ?? "";
-
-  console.log("[draft-tcp] Model response received, content length:", rawText.length);
-
-  if (typeof rawText !== "string" || !rawText.trim()) {
-    console.error("[draft-tcp] Empty or invalid content from model");
-    return jsonError(500, {
-      error: "Invalid JSON from model",
-      rawText: rawText ? String(rawText).slice(0, 2000) : "(empty response)",
-    });
-  }
-
-  const firstBrace = rawText.indexOf("{");
-  const lastBrace = rawText.lastIndexOf("}");
-
-  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-    console.error("[draft-tcp] No valid JSON object found in model response");
-    return jsonError(500, {
-      error: "Invalid JSON from model",
-      rawText: rawText.slice(0, 2000),
-    });
-  }
-
-  const jsonSlice = rawText.slice(firstBrace, lastBrace + 1);
-
-  let candidate: unknown;
-  try {
-    candidate = JSON.parse(jsonSlice);
-  } catch (jsonErr) {
-    const errMsg = jsonErr instanceof Error ? jsonErr.message : String(jsonErr);
-    console.error("[draft-tcp] JSON parse failed:", errMsg);
-    return jsonError(500, {
-      error: "Invalid JSON from model",
-      rawText: rawText.slice(0, 2000),
-    });
-  }
-
-  console.log("[draft-tcp] Successfully parsed model response JSON");
-
-  const validation = validateDraftResponse(candidate);
-
-  if (!validation.ok) {
-    // Log detailed info for debugging
-    console.error("[draft-tcp] Validation failed:");
-    console.error("  - issues:", validation.issues);
-    console.error("  - rawText:", rawText.slice(0, 1000));
-    console.error("  - jsonSlice:", jsonSlice.slice(0, 1000));
-    console.error("  - parsed:", JSON.stringify(candidate, null, 2).slice(0, 1000));
-
-    // One automatic retry with corrective instruction
-    console.log("[draft-tcp] Attempting retry with corrective prompt...");
-    
-    const retryPrompt = `Your last JSON failed validation with these issues: ${validation.issues.join("; ")}
-
-Return ONLY a corrected JSON object with the exact same schema. Remember:
-- signSpacing must have exactly 3 objects with labels "A", "B", "C" (uppercase)
-- All numeric fields (distanceFt, taperLengthFt, bufferLengthFt, cones, signs, flaggers) must be numbers, not strings
-- arrowBoard must be a boolean (true or false), not a string
-- svgContent must be "<svg></svg>"
-
-Return ONLY the corrected JSON, no explanation.`;
-
-    try {
-      const retryResponse = await fetch(MODEL_API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: combinedSystemPrompt },
-            { role: "user", content: userPrompt },
-            { role: "assistant", content: rawText },
-            { role: "user", content: retryPrompt },
-          ],
-          temperature: 0.0,
-        }),
-      });
-
-      if (retryResponse.ok) {
-        const retryJson = await retryResponse.json() as { choices?: { message?: { content?: string } }[] };
-        const retryRawText = retryJson?.choices?.[0]?.message?.content ?? "";
-        
-        console.log("[draft-tcp] Retry response received, length:", retryRawText.length);
-
-        const retryFirstBrace = retryRawText.indexOf("{");
-        const retryLastBrace = retryRawText.lastIndexOf("}");
-
-        if (retryFirstBrace !== -1 && retryLastBrace > retryFirstBrace) {
-          const retryJsonSlice = retryRawText.slice(retryFirstBrace, retryLastBrace + 1);
-          try {
-            const retryCandidate = JSON.parse(retryJsonSlice);
-            const retryValidation = validateDraftResponse(retryCandidate);
-
-            if (retryValidation.ok) {
-              console.log("[draft-tcp] Retry succeeded!");
-              const svgContent = generateSvgFromPlan(retryValidation.value.plan);
-              
-              // Add fallback assumption if applicable
-              const assumptions = [...retryValidation.value.assumptions];
-              if (usingFallbackDefaults) {
-                assumptions.unshift("⚠️ No specific handbook guidance found for this road type. Using MUTCD general defaults. Verify against local jurisdiction requirements.");
-              }
-              if (deviceWarning) {
-                assumptions.push("⚠️ Device counts are estimates based on general MUTCD guidance; specific handbook values not available.");
-              }
-              
-              const finalResponse: TcpDraftResponse = {
-                ...retryValidation.value,
-                assumptions,
-                svgContent,
-                coverage, // Include coverage info for UI
-              };
-              return NextResponse.json(finalResponse);
-            } else {
-              console.error("[draft-tcp] Retry also failed validation:", retryValidation.issues);
-            }
-          } catch (retryParseErr) {
-            console.error("[draft-tcp] Retry JSON parse failed:", retryParseErr);
-          }
-        }
-      }
-    } catch (retryErr) {
-      console.error("[draft-tcp] Retry fetch failed:", retryErr);
-    }
-
-    // Return original validation error if retry failed
-    return jsonError(500, {
-      error: "Model response failed validation",
-      details: { issues: validation.issues },
-      parsed: candidate,
-    });
-  }
-
-  const responseValue = validation.value;
-
-  const svgContent = generateSvgFromPlan(responseValue.plan);
-  
-  // Add fallback assumption if applicable
-  const assumptions = [...responseValue.assumptions];
-  if (usingFallbackDefaults) {
-    assumptions.unshift("⚠️ No specific handbook guidance found for this road type. Using MUTCD general defaults. Verify against local jurisdiction requirements.");
-  }
-  if (deviceWarning) {
-    assumptions.push("⚠️ Device counts are estimates based on general MUTCD guidance; specific handbook values not available.");
-  }
-  
-  const finalResponse: TcpDraftResponse = {
-    ...responseValue,
+  const response: TcpDraftResponse = {
+    summary: `Traffic control plan for ${tcpReq.workType.replace(/_/g, " ")} on ${tcpReq.roadType.replace(/_/g, " ")} road at ${tcpReq.postedSpeedMph} mph. Layout: OTTCH Diagram 320 / MUTCD Figure 6P-10.`,
+    plan,
     assumptions,
+    references,
     svgContent,
-    coverage, // Include coverage info for UI confidence display
+    coverage,
   };
 
-  return NextResponse.json(finalResponse);
+  console.log("[draft-tcp] Plan computed successfully:", {
+    spacing_A: plan.signSpacing[0].distanceFt,
+    spacing_B: plan.signSpacing[1].distanceFt,
+    spacing_C: plan.signSpacing[2].distanceFt,
+    taperFt: plan.taperLengthFt,
+    bufferFt: plan.bufferLengthFt,
+    flaggers: plan.devices.flaggers,
+  });
+
+  return NextResponse.json(response);
 }
-
-
