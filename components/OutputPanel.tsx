@@ -45,6 +45,16 @@ export interface JobOwnerInfo {
   jobAssignedDate?: string;
 }
 
+/** Plan approval status for PDF export */
+export interface PlanApprovalInfo {
+  status: "draft" | "pending_approval" | "approved" | "rejected";
+  approverName?: string;
+  approverCredential?: string;
+  approvalDate?: string;
+  requiresPeStamp?: boolean;
+  isStateHighway?: boolean;
+}
+
 export interface JobInfoForExport {
   locationLabel: string;
   roadType: string;
@@ -105,6 +115,8 @@ export interface OutputPanelProps {
   onLayoutLockChange?: (locked: boolean) => void;
   /** Callback when road features are extracted from map */
   onRoadFeaturesExtracted?: (roads: RoadPolyline[]) => void;
+  /** Plan approval status for PDF export */
+  planApproval?: PlanApprovalInfo | null;
 }
 
 export default function OutputPanel({
@@ -126,6 +138,7 @@ export default function OutputPanel({
   isLayoutLocked = false,
   onLayoutLockChange,
   onRoadFeaturesExtracted,
+  planApproval,
 }: OutputPanelProps) {
   const [isExporting, setIsExporting] = useState(false);
   const [showCoverageDetails, setShowCoverageDetails] = useState(false);
@@ -277,6 +290,41 @@ export default function OutputPanel({
       pdf.setDrawColor(200);
       pdf.line(marginX, headerY + 4, pageWidth - marginX, headerY + 4);
 
+      // Check approval status and add appropriate banners
+      const isApproved = planApproval?.status === "approved";
+      const requiresPeStamp = planApproval?.requiresPeStamp || planApproval?.isStateHighway;
+      
+      // If approved, show approval info
+      if (isApproved && planApproval?.approverName) {
+        headerY += 8;
+        pdf.setFillColor(220, 252, 231); // Light green background
+        pdf.rect(marginX, headerY, pageWidth - 2 * marginX, 10, "F");
+        pdf.setFontSize(9);
+        pdf.setTextColor(22, 101, 52); // Dark green text
+        pdf.setFont("helvetica", "bold");
+        pdf.text("APPROVED", marginX + 3, headerY + 6);
+        pdf.setFont("helvetica", "normal");
+        const approvalText = `by ${planApproval.approverName}${planApproval.approverCredential ? ` (${planApproval.approverCredential})` : ""} on ${planApproval.approvalDate || "date unknown"}`;
+        pdf.text(approvalText, marginX + 25, headerY + 6);
+        pdf.setTextColor(0, 0, 0);
+        headerY += 12;
+      }
+      
+      // PE Stamp Required banner (for state highways)
+      if (requiresPeStamp) {
+        headerY += isApproved ? 2 : 8;
+        pdf.setFillColor(254, 243, 199); // Light amber background
+        pdf.rect(marginX, headerY, pageWidth - 2 * marginX, 10, "F");
+        pdf.setFontSize(9);
+        pdf.setTextColor(146, 64, 14); // Dark amber text
+        pdf.setFont("helvetica", "bold");
+        pdf.text("PE STAMP REQUIRED", marginX + 3, headerY + 6);
+        pdf.setFont("helvetica", "normal");
+        pdf.text("– State highway jurisdiction requires Professional Engineer approval", marginX + 45, headerY + 6);
+        pdf.setTextColor(0, 0, 0);
+        headerY += 12;
+      }
+
       // Calculate how many pages we need
       let remainingHeight = scaledHeight;
       let sourceY = 0;
@@ -307,14 +355,39 @@ export default function OutputPanel({
           scaledHeight
         );
 
+        // Add DRAFT watermark to every page if not approved
+        if (!isApproved) {
+          pdf.saveGraphicsState();
+          pdf.setGState(new (pdf as any).GState({ opacity: 0.15 }));
+          pdf.setFontSize(72);
+          pdf.setTextColor(200, 200, 200);
+          pdf.setFont("helvetica", "bold");
+          
+          // Center the watermark diagonally
+          const centerX = pageWidth / 2;
+          const centerY = pageHeight / 2;
+          
+          // Rotate and draw DRAFT watermark
+          const angle = -35 * (Math.PI / 180);
+          const text = "DRAFT";
+          const textWidth = pdf.getTextWidth(text);
+          
+          // Use transform matrix for rotation
+          pdf.text(text, centerX - textWidth / 2 + 15, centerY + 10);
+          
+          pdf.restoreGraphicsState();
+          pdf.setTextColor(0, 0, 0);
+        }
+
         sourceY += sliceHeightPx;
         remainingHeight -= sliceHeight;
         pageNum++;
       }
 
-      // Generate filename with date
+      // Generate filename with date and status
       const dateForFilename = now.toISOString().split("T")[0];
-      pdf.save(`tcp-draft-${dateForFilename}.pdf`);
+      const statusSuffix = isApproved ? "approved" : "draft";
+      pdf.save(`tcp-${statusSuffix}-${dateForFilename}.pdf`);
     } catch (err) {
       console.error("PDF export failed:", err);
       
