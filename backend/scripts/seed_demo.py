@@ -30,6 +30,8 @@ from app.auth.password import hash_password
 
 
 def main():
+    # Create tables if they don't exist
+    Base.metadata.create_all(bind=engine)
     planner_password = os.environ.get("DEMO_PLANNER_PASSWORD")
     approver_password = os.environ.get("DEMO_APPROVER_PASSWORD")
     
