@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 
 export type RoadType = "2_lane_undivided" | "multilane_divided" | "intersection";
 export type WorkType = "shoulder_work" | "lane_closure" | "one_lane_two_way_flaggers";
+export type GenerationMode = "manual" | "autonomous";
 
 /**
  * Job Owner / Company structured data
@@ -25,6 +26,8 @@ export interface JobDetails {
   notes: string;
   // Job owner / company info (structured)
   jobOwner: JobOwner;
+  // Generation mode: manual (rules engine) or autonomous (AI generates everything)
+  generationMode: GenerationMode;
 }
 
 export interface JobDetailsFormProps {
@@ -85,6 +88,9 @@ const RoadTypeIcon = ({ type, selected }: { type: RoadType; selected: boolean })
 };
 
 export default function JobDetailsForm({ onChange }: JobDetailsFormProps) {
+  // Generation mode
+  const [generationMode, setGenerationMode] = useState<GenerationMode>("manual");
+  
   // Road configuration
   const [roadType, setRoadType] = useState<RoadType>("2_lane_undivided");
   const [postedSpeedMph, setPostedSpeedMph] = useState<string>("35");
@@ -189,12 +195,14 @@ export default function JobDetailsForm({ onChange }: JobDetailsFormProps) {
       isNight,
       notes,
       jobOwner,
+      generationMode,
     };
 
     onChange(details, isValid);
   }, [
     roadType, postedSpeedMph, workType, workLengthFt, isNight, notes, 
     companyName, contractorName, phone, jobNumber, jobAssignedDate, 
+    generationMode,
     onChange
   ]);
 
@@ -221,6 +229,66 @@ export default function JobDetailsForm({ onChange }: JobDetailsFormProps) {
 
   return (
     <div className="flex flex-col gap-6">
+      {/* SECTION 0: GENERATION MODE */}
+      <div className="space-y-4">
+        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 pb-2">
+          Generation Mode
+        </h3>
+        
+        <div className="flex bg-slate-100 p-1 rounded-sm border border-slate-200">
+          <button
+            type="button"
+            onClick={() => setGenerationMode("manual")}
+            className={`flex-1 py-2 text-xs font-medium rounded-sm transition-all ${
+              generationMode === "manual" 
+                ? "bg-white text-slate-900 shadow-sm border border-slate-200" 
+                : "text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            <span className="flex items-center justify-center gap-1.5">
+              <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
+              </svg>
+              Manual
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setGenerationMode("autonomous")}
+            className={`flex-1 py-2 text-xs font-medium rounded-sm transition-all ${
+              generationMode === "autonomous" 
+                ? "bg-purple-600 text-white shadow-sm border border-purple-700" 
+                : "text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            <span className="flex items-center justify-center gap-1.5">
+              <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M13.5 3a.5.5 0 01.5.5V5h1.5a.5.5 0 010 1H14v1.5a.5.5 0 01-1 0V6h-1.5a.5.5 0 010-1H13V3.5a.5.5 0 01.5-.5z" />
+                <path d="M10 9a3 3 0 100-6 3 3 0 000 6zM6.5 10.5A.5.5 0 017 10h6a.5.5 0 01.5.5v4a2.5 2.5 0 01-5 0v-4z" />
+              </svg>
+              Autonomous (AI)
+            </span>
+          </button>
+        </div>
+        
+        {/* Mode Description */}
+        <div className={`p-3 rounded-sm border text-xs ${
+          generationMode === "manual" 
+            ? "bg-slate-50 border-slate-200 text-slate-600"
+            : "bg-purple-50 border-purple-200 text-purple-700"
+        }`}>
+          {generationMode === "manual" ? (
+            <>
+              <strong>Manual Mode:</strong> Rules engine generates layout. You confirm photo extractions and submit for named-person approval. Produces <span className="font-mono">DRAFT</span> watermark until approved.
+            </>
+          ) : (
+            <>
+              <strong>Autonomous Mode:</strong> AI generates complete TCP layout with self-correction. No photo confirmation or approval gates. Produces <span className="font-mono">AI GENERATED - NOT REVIEWED BY A HUMAN</span> watermark.
+            </>
+          )}
+        </div>
+      </div>
+
       {/* SECTION 1: ROAD SETTINGS */}
       <div className="space-y-4">
         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 pb-2">

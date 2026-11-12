@@ -4,7 +4,7 @@ from decimal import Decimal
 from uuid import UUID
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
-from app.models.plan import LayoutFamily, ApproverKind
+from app.models.plan import LayoutFamily, ApproverKind, GenerationMode
 
 
 class SiteFactsInput(BaseModel):
@@ -23,9 +23,17 @@ class SiteFactsInput(BaseModel):
 
 
 class PlanCreate(BaseModel):
-    """Request to create a plan."""
+    """Request to create a plan (manual mode with rules engine)."""
     layout_family: LayoutFamily = LayoutFamily.ottch_320_mutcd_ta10
     site_facts: SiteFactsInput
+    generation_mode: GenerationMode = GenerationMode.manual
+
+
+class AutonomousPlanCreate(BaseModel):
+    """Request to create a plan in autonomous mode (AI generates everything)."""
+    layout_family: LayoutFamily = LayoutFamily.ottch_320_mutcd_ta10
+    site_facts: SiteFactsInput
+    site_photos_summary: Optional[str] = None  # Optional photo analysis summary
 
 
 class ComputationResponse(BaseModel):
@@ -65,9 +73,34 @@ class PlanResponse(BaseModel):
     created_by: UUID
     created_at: datetime
     computation: Optional[ComputationResponse] = None
+    generation_mode: str = "manual"
+    autonomous_attempt_count: Optional[int] = None
+    autonomous_model_name: Optional[str] = None
+    autonomous_validation_passed: Optional[bool] = None
 
     class Config:
         from_attributes = True
+
+
+class GenerationAttemptResponse(BaseModel):
+    """Response for a single generation attempt."""
+    attempt_number: int
+    validation_passed: bool
+    error_count: int
+    warning_count: int
+    violations: List[Dict[str, Any]]
+    latency_ms: Optional[int]
+    model_name: str
+
+
+class AutonomousPlanResponse(BaseModel):
+    """Response for autonomous plan generation."""
+    plan: PlanResponse
+    success: bool
+    total_attempts: int
+    best_attempt_number: Optional[int]
+    attempts: List[GenerationAttemptResponse]
+    remaining_violations: Optional[List[Dict[str, Any]]] = None
 
 
 class ApprovalCreate(BaseModel):
