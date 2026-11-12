@@ -45,6 +45,20 @@ export interface JobOwnerInfo {
   jobAssignedDate?: string;
 }
 
+/** Plan approval status for PDF export */
+export interface PlanApprovalInfo {
+  status: "draft" | "pending_approval" | "approved" | "rejected" | "autonomous_validated" | "autonomous_failed_validation";
+  approverName?: string;
+  approverCredential?: string;
+  approvalDate?: string;
+  requiresPeStamp?: boolean;
+  isStateHighway?: boolean;
+  generationMode?: "manual" | "autonomous";
+  autonomousModelName?: string;
+  autonomousAttemptCount?: number;
+  autonomousValidationPassed?: boolean;
+}
+
 export interface JobInfoForExport {
   locationLabel: string;
   roadType: string;
@@ -105,6 +119,8 @@ export interface OutputPanelProps {
   onLayoutLockChange?: (locked: boolean) => void;
   /** Callback when road features are extracted from map */
   onRoadFeaturesExtracted?: (roads: RoadPolyline[]) => void;
+  /** Plan approval status for PDF export */
+  planApproval?: PlanApprovalInfo | null;
 }
 
 export default function OutputPanel({
@@ -126,6 +142,7 @@ export default function OutputPanel({
   isLayoutLocked = false,
   onLayoutLockChange,
   onRoadFeaturesExtracted,
+  planApproval,
 }: OutputPanelProps) {
   const [isExporting, setIsExporting] = useState(false);
   const [showCoverageDetails, setShowCoverageDetails] = useState(false);
@@ -277,6 +294,80 @@ export default function OutputPanel({
       pdf.setDrawColor(200);
       pdf.line(marginX, headerY + 4, pageWidth - marginX, headerY + 4);
 
+      // Check approval status and generation mode
+      const isApproved = planApproval?.status === "approved";
+      const isAutonomous = planApproval?.generationMode === "autonomous";
+      const isAutonomousValidated = planApproval?.status === "autonomous_validated";
+      const isAutonomousFailed = planApproval?.status === "autonomous_failed_validation";
+      const requiresPeStamp = planApproval?.requiresPeStamp || planApproval?.isStateHighway;
+      
+      // If approved, show approval info
+      if (isApproved && planApproval?.approverName) {
+        headerY += 8;
+        pdf.setFillColor(220, 252, 231); // Light green background
+        pdf.rect(marginX, headerY, pageWidth - 2 * marginX, 10, "F");
+        pdf.setFontSize(9);
+        pdf.setTextColor(22, 101, 52); // Dark green text
+        pdf.setFont("helvetica", "bold");
+        pdf.text("APPROVED", marginX + 3, headerY + 6);
+        pdf.setFont("helvetica", "normal");
+        const approvalText = `by ${planApproval.approverName}${planApproval.approverCredential ? ` (${planApproval.approverCredential})` : ""} on ${planApproval.approvalDate || "date unknown"}`;
+        pdf.text(approvalText, marginX + 25, headerY + 6);
+        pdf.setTextColor(0, 0, 0);
+        headerY += 12;
+      }
+      
+      // PE Stamp Required banner (for state highways)
+      if (requiresPeStamp) {
+        headerY += isApproved ? 2 : 8;
+        pdf.setFillColor(254, 243, 199); // Light amber background
+        pdf.rect(marginX, headerY, pageWidth - 2 * marginX, 10, "F");
+        pdf.setFontSize(9);
+        pdf.setTextColor(146, 64, 14); // Dark amber text
+        pdf.setFont("helvetica", "bold");
+        pdf.text("PE STAMP REQUIRED", marginX + 3, headerY + 6);
+        pdf.setFont("helvetica", "normal");
+        pdf.text("– State highway jurisdiction requires Professional Engineer approval", marginX + 45, headerY + 6);
+        pdf.setTextColor(0, 0, 0);
+        headerY += 12;
+      }
+      
+      // Autonomous mode banner
+      if (isAutonomous) {
+        headerY += 8;
+        if (isAutonomousValidated) {
+          // Validated but not human-reviewed
+          pdf.setFillColor(233, 213, 255); // Light purple background
+          pdf.rect(marginX, headerY, pageWidth - 2 * marginX, 12, "F");
+          pdf.setFontSize(8);
+          pdf.setTextColor(88, 28, 135); // Dark purple text
+          pdf.setFont("helvetica", "bold");
+          pdf.text("AUTONOMOUS - AI GENERATED - NOT REVIEWED BY A HUMAN", marginX + 3, headerY + 5);
+          pdf.setFont("helvetica", "normal");
+          const modelInfo = planApproval?.autonomousModelName 
+            ? ` | Model: ${planApproval.autonomousModelName}` 
+            : "";
+          const attemptInfo = planApproval?.autonomousAttemptCount 
+            ? ` | Attempts: ${planApproval.autonomousAttemptCount}` 
+            : "";
+          pdf.text(`Validation: PASSED${modelInfo}${attemptInfo}`, marginX + 3, headerY + 10);
+          pdf.setTextColor(0, 0, 0);
+          headerY += 14;
+        } else if (isAutonomousFailed) {
+          // Failed validation - block PDF export ideally, but show warning
+          pdf.setFillColor(254, 202, 202); // Light red background
+          pdf.rect(marginX, headerY, pageWidth - 2 * marginX, 12, "F");
+          pdf.setFontSize(8);
+          pdf.setTextColor(153, 27, 27); // Dark red text
+          pdf.setFont("helvetica", "bold");
+          pdf.text("AUTONOMOUS - AI GENERATED - VALIDATION FAILED", marginX + 3, headerY + 5);
+          pdf.setFont("helvetica", "normal");
+          pdf.text("This plan did not pass MUTCD/OTTCH validation and should not be used", marginX + 3, headerY + 10);
+          pdf.setTextColor(0, 0, 0);
+          headerY += 14;
+        }
+      }
+
       // Calculate how many pages we need
       let remainingHeight = scaledHeight;
       let sourceY = 0;
@@ -307,14 +398,64 @@ export default function OutputPanel({
           scaledHeight
         );
 
+        // Add watermark to every page if not approved
+        if (!isApproved) {
+          pdf.saveGraphicsState();
+          pdf.setGState(new (pdf as any).GState({ opacity: 0.15 }));
+          pdf.setFont("helvetica", "bold");
+          
+          // Center the watermark diagonally
+          const centerX = pageWidth / 2;
+          const centerY = pageHeight / 2;
+          
+          // Choose watermark text based on mode
+          let watermarkText: string;
+          let fontSize: number;
+          
+          if (isAutonomous) {
+            watermarkText = "AI GENERATED";
+            fontSize = 60;
+          } else if (isAutonomousFailed) {
+            watermarkText = "VALIDATION FAILED";
+            fontSize = 50;
+            pdf.setTextColor(255, 150, 150); // Light red for failed
+          } else {
+            watermarkText = "DRAFT";
+            fontSize = 72;
+          }
+          
+          pdf.setFontSize(fontSize);
+          if (!isAutonomousFailed) {
+            pdf.setTextColor(200, 200, 200);
+          }
+          
+          const textWidth = pdf.getTextWidth(watermarkText);
+          
+          // Use transform matrix for rotation
+          pdf.text(watermarkText, centerX - textWidth / 2 + 15, centerY + 10);
+          
+          pdf.restoreGraphicsState();
+          pdf.setTextColor(0, 0, 0);
+        }
+
         sourceY += sliceHeightPx;
         remainingHeight -= sliceHeight;
         pageNum++;
       }
 
-      // Generate filename with date
+      // Generate filename with date and status
       const dateForFilename = now.toISOString().split("T")[0];
-      pdf.save(`tcp-draft-${dateForFilename}.pdf`);
+      let statusSuffix: string;
+      if (isApproved) {
+        statusSuffix = "approved";
+      } else if (isAutonomousValidated) {
+        statusSuffix = "autonomous-validated";
+      } else if (isAutonomousFailed) {
+        statusSuffix = "autonomous-failed";
+      } else {
+        statusSuffix = "draft";
+      }
+      pdf.save(`tcp-${statusSuffix}-${dateForFilename}.pdf`);
     } catch (err) {
       console.error("PDF export failed:", err);
       

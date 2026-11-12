@@ -21,3 +21,5 @@ rag_index/
 
 # TypeScript build info
 tsconfig.tsbuildinfo
+*.pyc
+__pycache__/

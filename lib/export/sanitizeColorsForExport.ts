@@ -118,7 +118,7 @@ function sanitizeHtmlElement(
   
   // Check and sanitize CSS color properties
   for (const prop of CSS_COLOR_PROPS) {
-    const computedValue = computed?.getPropertyValue(prop);
+    const computedValue = computed?.getPropertyValue(prop) ?? null;
     if (containsModernColor(computedValue)) {
       // For computed styles that return modern colors, we need a fallback mapping
       const safeColor = getFallbackForProperty(prop);
